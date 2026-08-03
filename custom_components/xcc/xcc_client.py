@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 
 import aiohttp
 from lxml import etree
@@ -20,6 +21,59 @@ except ImportError:
 
 # Global lock to prevent concurrent authentication attempts to the same IP
 _auth_locks = {}
+
+# ---------------------------------------------------------------------------
+# Heating-circuit (okruh) namespacing
+#
+# Every circuit's data page (OKRUH10.XML = circuit 0, OKRUH12.XML = circuit 2,
+# ...) carries the SAME unprefixed ``TO-*`` prop names, and the okruh.xml
+# descriptor is byte-identical for every ``?page=N``. Entities are keyed by
+# prop alone, so without a namespace two circuits collide and one is silently
+# dropped. Circuit 0 keeps the bare ``TO-*`` names so existing entity_ids and
+# unique_ids (and their recorder history) are untouched; every other circuit
+# is namespaced to ``OKRUH<n>-*``.
+# ---------------------------------------------------------------------------
+_OKRUH_DATA_PAGE_RE = re.compile(r"^OKRUH1(\d+)\.XML$")
+_OKRUH_PROP_RE = re.compile(r"^OKRUH(\d+)-(.+)$")
+_CIRCUIT_PROP_PREFIX = "TO-"
+
+
+def okruh_data_page(circuit: int) -> str:
+    """Return the data-page filename carrying ``circuit``'s live values."""
+    return f"OKRUH1{circuit}.XML"
+
+
+def circuit_from_okruh_page(page: str) -> int | None:
+    """Return the circuit index a data page belongs to, or None."""
+    match = _OKRUH_DATA_PAGE_RE.match((page or "").upper())
+    return int(match.group(1)) if match else None
+
+
+def qualify_circuit_prop(prop: str, circuit: int | None) -> str:
+    """Namespace a circuit-scoped ``TO-*`` prop for circuits above 0.
+
+    Only ``TO-*`` props are circuit-scoped. The other props on an okruh data
+    page (SVENKU, BLOKYSPOTREBY-*, FVE-*, ...) are system-wide duplicates of
+    values published on other pages and must keep their global names so they
+    continue to dedupe against them.
+    """
+    if not circuit or not prop:
+        return prop
+    if prop.upper().startswith(_CIRCUIT_PROP_PREFIX):
+        return f"OKRUH{circuit}-{prop[len(_CIRCUIT_PROP_PREFIX):]}"
+    return prop
+
+
+def unqualify_circuit_prop(prop: str) -> tuple[str, int | None]:
+    """Inverse of :func:`qualify_circuit_prop`.
+
+    Returns ``(base_prop, circuit)``. ``circuit`` is None when ``prop`` is not
+    circuit-namespaced, in which case ``base_prop`` is returned unchanged.
+    """
+    match = _OKRUH_PROP_RE.match((prop or "").upper())
+    if not match:
+        return prop, None
+    return f"{_CIRCUIT_PROP_PREFIX}{match.group(2)}", int(match.group(1))
 
 
 class XCCClient:
@@ -253,6 +307,11 @@ class XCCClient:
                         'id': int(page_id) if page_id else None,
                         'name': page_name,
                         'active': is_active,
+                        # The circuit enable bit alone. 'active' also accepts a
+                        # non-zero INPUTI (an icon index), which every circuit
+                        # carries whether enabled or not — too loose to decide
+                        # which okruh data pages are worth polling.
+                        'enabled': len(active_elem_v) > 0,
                         'type': page_type,
                         'zone_id': int(zone_id) if zone_id else None
                     }
@@ -548,6 +607,38 @@ class XCCClient:
             data_pages = []
             for desc_page, pages in data_pages_map.items():
                 data_pages.extend(pages)
+
+            # Step 5b: okruh data pages follow the circuits main.xml reports as
+            # enabled. discover_data_pages only probes a fixed name pattern
+            # (OKRUH10/OKRUH11), so on its own it polls circuits that are
+            # switched off and misses enabled ones outside the guess.
+            circuit_pages = []
+            for page_url, info in pages_info.items():
+                if not info.get('enabled'):
+                    continue
+                match = re.match(r'^okruh\.xml\?page=(\d+)$', str(page_url).strip().lower())
+                if not match:
+                    continue
+                candidate = okruh_data_page(int(match.group(1)))
+                try:
+                    probe = await self.fetch_page(candidate)
+                except Exception as e:
+                    _LOGGER.debug("Circuit data page %s not accessible: %s", candidate, e)
+                    continue
+                if self._is_login_page(probe) or len(probe) <= 100:
+                    _LOGGER.debug("Circuit data page %s empty or login page", candidate)
+                    continue
+                circuit_pages.append(candidate)
+                _LOGGER.info(
+                    "Circuit '%s' (%s) is enabled -> %s",
+                    info.get('name'), page_url, candidate,
+                )
+
+            if circuit_pages:
+                data_pages = [
+                    p for p in data_pages if not _OKRUH_DATA_PAGE_RE.match(p.upper())
+                ]
+                data_pages.extend(circuit_pages)
 
             # Remove duplicates
             data_pages = list(set(data_pages))
@@ -890,8 +981,18 @@ class XCCClient:
             prop_upper = prop.upper()
             page_to_fetch = None
 
+            # Circuit-namespaced props (OKRUH<n>-*) resolve to that circuit's
+            # own data page; the page itself carries the prop under its bare
+            # TO-* name, so unqualify before the NAME lookup below.
+            lookup_prop, prop_circuit = unqualify_circuit_prop(prop)
+            if prop_circuit is not None:
+                page_to_fetch = okruh_data_page(prop_circuit)
+                prop_upper = lookup_prop.upper()
+
             tuv_keywords = ["TUV", "DHW", "ZASOBNIK", "TEPLOTA", "TALT"]
-            if prop_upper.startswith("SYSCONFIG-"):
+            if page_to_fetch is not None:
+                pass
+            elif prop_upper.startswith("SYSCONFIG-"):
                 page_to_fetch = "main.xml"
             elif any(tuv_word in prop_upper for tuv_word in tuv_keywords):
                 page_to_fetch = "TUV11.XML"
@@ -917,7 +1018,7 @@ class XCCClient:
             if not internal_name:
                 page_content = await self.fetch_page(page_to_fetch)
                 name_mapping = self._extract_name_mapping_from_xml(page_content)
-                internal_name = name_mapping.get(prop)
+                internal_name = name_mapping.get(lookup_prop)
 
             if not internal_name:
                 _LOGGER.error("❌ Could not find internal NAME for property %s in %s", prop, page_to_fetch)
@@ -960,6 +1061,10 @@ def parse_xml_entities(
 
     entities = []
 
+    # Non-zero for a secondary heating circuit's data page; its TO-* props get
+    # namespaced so they don't collide with circuit 0's.
+    circuit = circuit_from_okruh_page(page_name)
+
     _LOGGER.debug(
         "Parsing XML for page %s, content length: %d bytes", page_name, len(xml_content)
     )
@@ -997,7 +1102,7 @@ def parse_xml_entities(
         skipped_count = 0
 
         for i, elem in enumerate(input_elements):
-            prop = elem.get("P")
+            prop = qualify_circuit_prop(elem.get("P"), circuit)
             value = elem.get("VALUE")
 
             # Only log first 3 elements once per function call to avoid spam (they're always the same)
@@ -1142,7 +1247,7 @@ def parse_xml_entities(
         _LOGGER.debug("Processing prop elements for %s", page_name)
 
     for elem in prop_elements:
-        prop = elem.get("prop")
+        prop = qualify_circuit_prop(elem.get("prop"), circuit)
         if not prop:
             continue
 
@@ -1192,7 +1297,7 @@ def parse_xml_entities(
         nast_processed = 0
 
         for elem in nast_elements:
-            prop = elem.get("prop")
+            prop = qualify_circuit_prop(elem.get("prop"), circuit)
             if not prop:
                 continue
 

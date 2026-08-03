@@ -2,6 +2,39 @@
 
 All notable changes to the XCC Heat Pump Controller Home Assistant integration.
 
+## [1.15.17] - 2026-08-03
+
+### ✨ New Features
+
+#### **Per-circuit heating-circuit entities**
+Only one heating circuit ever reached Home Assistant. Every circuit's data page
+(`OKRUH10.XML` = circuit 0, `OKRUH12.XML` = circuit 2, ...) carries the *same*
+unprefixed `TO-*` prop names and they all share one descriptor — `okruh.xml` is
+byte-identical for every `?page=N` — so circuits collided on prop-keyed entity
+ids. In practice they never even got that far: `_normalize_page_to_device`
+reduced `OKRUH11.XML`/`OKRUH12.XML` to the keys `OKRUH1`/`OKRUH12`, neither of
+which is in `_DEVICE_PRIORITY`, so those circuits' entities were **silently
+dropped** after being fetched.
+
+- Circuits above 0 are now namespaced to `OKRUH<n>-*` (e.g. `OKRUH2-KONSTANTA`
+  → `number.xcc_okruh2_konstanta`). **Circuit 0 keeps its bare `TO-*` names**, so
+  every existing entity_id, unique_id and its recorder history is untouched.
+- Only `TO-*` props are namespaced. The system-wide props an okruh page also
+  carries (`SVENKU`, `BLOKYSPOTREBY-*`, `FVE-*`, ...) keep their global names and
+  continue to dedupe against the other pages that publish them.
+- Secondary circuits inherit circuit 0's descriptor (entity type, unit, select
+  options, writability) via a base-prop fallback in
+  `lookup_with_normalized_fallback`, and are qualified in the UI as
+  `Okruh <n> <name>`.
+- Writes route to the owning circuit's data page; the POST still uses the bare
+  `TO-*` name that page actually publishes.
+- Discovery now polls the circuits `main.xml` reports as **enabled** (the
+  `INPUTV` bit), instead of probing a fixed `OKRUH10`/`OKRUH11` guess — which
+  both polled switched-off circuits and missed enabled ones.
+
+Covered by `tests/test_circuit_namespacing.py` (19 tests) against a real
+`OKRUH12.XML` sample.
+
 ## [1.15.16] - 2026-07-17
 
 ### ✨ New Features

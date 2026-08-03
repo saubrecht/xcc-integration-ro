@@ -23,6 +23,23 @@ _NORMALIZE_PREFIX_STRIPS: tuple[str, ...] = ("WEB-", "MAIN-", "CONFIG-")
 _INVALID_ENTITY_ID_CHARS = re.compile(r"[^a-z0-9_]")
 _REPEATED_UNDERSCORES = re.compile(r"_+")
 
+# Heating-circuit namespacing. Mirrors xcc_client.qualify_circuit_prop, kept
+# local so this module stays dependency-free (see module docstring).
+_OKRUH_DATA_PAGE_RE = re.compile(r"^OKRUH1(\d+)\.XML$")
+_OKRUH_PROP_RE = re.compile(r"^OKRUH(\d+)-(.+)$")
+
+
+def _circuit_base_prop(prop: str) -> str | None:
+    """Return the bare ``TO-*`` prop behind a circuit-namespaced one, else None."""
+    match = _OKRUH_PROP_RE.match((prop or "").upper())
+    return f"TO-{match.group(2)}" if match else None
+
+
+def circuit_of_prop(prop: str) -> int | None:
+    """Return the circuit index a namespaced prop belongs to, else None."""
+    match = _OKRUH_PROP_RE.match((prop or "").upper())
+    return int(match.group(1)) if match else None
+
 
 def format_entity_id_suffix(prop: str) -> str:
     """Format an XCC property name into a valid Home Assistant entity-ID suffix.
@@ -112,6 +129,15 @@ def lookup_with_normalized_fallback(
     for key, value in table.items():
         if normalize_property_name(key) == normalized_prop:
             return value
+
+    # Circuit-namespaced props (OKRUH<n>-KONSTANTA) have no descriptor of their
+    # own — okruh.xml is byte-identical for every ?page=N and describes them
+    # under the bare TO-* name. Fall back to that so secondary circuits inherit
+    # circuit 0's entity type, unit, and select options.
+    base_prop = _circuit_base_prop(prop)
+    if base_prop is not None:
+        return lookup_with_normalized_fallback(base_prop, table, default)
+
     return default
 
 
@@ -162,21 +188,37 @@ def _resolve_friendly_name(
     the helper doesn't have to import ``const``.
     """
     if language == "english":
-        return (
+        name = (
             config.get("friendly_name_en")
             or config.get("friendly_name")
             or prop
         )
-    return (
-        config.get("friendly_name")
-        or config.get("friendly_name_en")
-        or prop
-    )
+    else:
+        name = (
+            config.get("friendly_name")
+            or config.get("friendly_name_en")
+            or prop
+        )
+
+    # Secondary circuits inherit circuit 0's descriptor, so without a qualifier
+    # every circuit would render under the same name.
+    circuit = circuit_of_prop(prop)
+    if circuit is not None:
+        return f"Okruh {circuit} {name}"
+    return name
 
 
 def _normalize_page_to_device(page: str, prop: str) -> str:
     """Map a raw XCC page name onto a logical device key."""
     page_upper = page.upper()
+    if _OKRUH_DATA_PAGE_RE.match(page_upper):
+        # Every circuit's data page (OKRUH10/OKRUH11/OKRUH12/...) folds into the
+        # single OKRUH device. Without this the replace-chain below yields
+        # "OKRUH1"/"OKRUH12", neither of which is in _DEVICE_PRIORITY, so those
+        # circuits' entities were silently dropped. Circuit collisions are
+        # prevented by prop namespacing (see xcc_client.qualify_circuit_prop),
+        # not by the device key.
+        return "OKRUH"
     if page_upper.startswith("NAST"):
         # nast.xml descriptor + the NAST1/2/3.XML data pages it spans (one per
         # <block data="NASTn">). All fold into the single NAST device; without
@@ -256,7 +298,10 @@ def process_entities(
     for entity in raw_entities:
         prop = entity["attributes"]["field_name"]
         page = entity["attributes"].get("page", "unknown")
-        has_descriptor = prop in entity_configs
+        # Circuit-namespaced props are described by their bare TO-* counterpart
+        # (okruh.xml is shared across circuits), so they are descriptor-backed
+        # even though the namespaced key itself is absent from the table.
+        has_descriptor = prop in entity_configs or _circuit_base_prop(prop) in entity_configs
         is_nast_entity = page.upper().startswith("NAST")
         is_sysconfig_entity = prop.startswith("SYSCONFIG-")
         if has_descriptor or is_nast_entity or is_sysconfig_entity:
