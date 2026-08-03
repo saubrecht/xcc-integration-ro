@@ -65,7 +65,7 @@ The integration automatically discovers entities from these XCC pages:
 
 | Page | Description | Typical Entities |
 |------|-------------|------------------|
-| **Heating Circuits** | Temperature control, schedules | Temperature sensors, setpoint controls |
+| **Heating Circuits** | Temperature control, schedules. Every circuit the controller reports as enabled is polled; the first keeps bare `xcc_to_*` names, further circuits are namespaced `xcc_okruh<n>_*` | Temperature sensors, setpoint controls |
 | **Photovoltaics** | Battery management, export limits | Power sensors, battery controls |
 | **PV Inverter** | Inverter configuration and telemetry | String/phase sensors, inverter settings |
 | **Hot Water** | Sanitization, circulation | Water temperature, heating controls |
