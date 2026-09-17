@@ -9,14 +9,14 @@ COORDINATOR = REPO / "custom_components" / "xcc" / "coordinator.py"
 
 
 def test_default_scan_interval():
-    """The default polling period remains two minutes."""
+    """The default polling period is one minute."""
     spec = importlib.util.spec_from_file_location(
         "xcc_const", REPO / "custom_components" / "xcc" / "const.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    assert module.DEFAULT_SCAN_INTERVAL == 120
+    assert module.DEFAULT_SCAN_INTERVAL == 60
 
 
 def test_options_scan_interval_overrides_initial_config_value():
