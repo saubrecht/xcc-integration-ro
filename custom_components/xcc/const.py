@@ -68,14 +68,10 @@ ENTITY_CATEGORY_DIAGNOSTIC: Final = "diagnostic"
 UPDATE_INTERVAL_FAST: Final = 30  # seconds - for frequently changing values
 UPDATE_INTERVAL_SLOW: Final = 300  # seconds - for configuration values
 
-# Entity platforms supported
+# Entity platforms exposed by this read-only integration.
 PLATFORMS: Final = [
     "sensor",
     "binary_sensor",
-    "switch",
-    "number",
-    "select",
-    "climate",
 ]
 
 # XCC specific constants

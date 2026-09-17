@@ -16,17 +16,23 @@ from .const import (
     DEFAULT_ENTITY_TYPE,
     DOMAIN,
     ENTITY_TYPE_INTEGRATION,
-    PLATFORMS,
 )
 from .coordinator import XCCDataUpdateCoordinator
 from .entity import async_regenerate_entity_ids
 
 _LOGGER = logging.getLogger(__name__)
 
-# Supported platforms
+# The integration is deliberately read-only.
 PLATFORMS_TO_SETUP = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
+]
+
+# Existing installations may still have platforms from a prior writable
+# version loaded. Include those on unload so the first reload after upgrade
+# removes them, while new setups only ever forward the sensor platform.
+PLATFORMS_TO_UNLOAD = [
+    *PLATFORMS_TO_SETUP,
     Platform.SWITCH,
     Platform.NUMBER,
     Platform.SELECT,
@@ -165,7 +171,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Unload integration platforms
     _LOGGER.debug("Unloading integration entities")
     unload_ok = await hass.config_entries.async_unload_platforms(
-        entry, PLATFORMS_TO_SETUP
+        entry, PLATFORMS_TO_UNLOAD
     )
 
     # Clean up coordinator resources
