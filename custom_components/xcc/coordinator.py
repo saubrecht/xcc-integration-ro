@@ -36,8 +36,6 @@ from .entity_helpers import (
     normalize_property_name,
     process_entities as _process_entities_core,
 )
-from .value_writer import resolve_property
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -54,8 +52,13 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
         # Set language preference from config or default
         self.language = entry.data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
 
-        # Set update interval from config or default
-        scan_interval = entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        # Prefer the value saved through the Configure flow. Initial setup
+        # stores the interval in ``entry.data``, while subsequent changes are
+        # stored in ``entry.options`` and reload this coordinator.
+        scan_interval = entry.options.get(
+            CONF_SCAN_INTERVAL,
+            entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+        )
         update_interval = timedelta(seconds=scan_interval)
 
         super().__init__(
@@ -164,18 +167,15 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Update data via library."""
+        """Serialize and throttle complete controller polling cycles."""
         import time
 
-        # Check if we need to throttle updates
         current_time = time.time()
         if current_time - self._last_update_time < self._min_update_interval:
             _LOGGER.debug("Throttling update request - too soon after last update")
             return self.data or {}
 
-        # Use lock to prevent concurrent updates
         async with self._update_lock:
-            # Double-check after acquiring lock
             current_time = time.time()
             if current_time - self._last_update_time < self._min_update_interval:
                 _LOGGER.debug("Another update completed while waiting for lock")
@@ -183,7 +183,14 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
 
             _LOGGER.debug("Starting data update for XCC controller %s", self.ip_address)
             self._last_update_time = current_time
+            # Keep the lock while using the persistent client. This covers
+            # connection setup, page discovery, descriptor loading, and every
+            # HTTP request in the poll; releasing it before those awaits lets
+            # two updates race on the same aiohttp session.
+            return await self._async_update_data_locked()
 
+    async def _async_update_data_locked(self) -> dict[str, Any]:
+        """Fetch and process a poll while ``_update_lock`` is held."""
         try:
             # Import XCC client here to avoid import issues
             from .xcc_client import XCCClient, parse_xml_entities
@@ -514,92 +521,13 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
         }
 
     async def async_set_value(self, entity_id: str, value: Any) -> bool:
-        """Set a value on the XCC controller."""
-        return await self.async_set_entity_value(entity_id, value)
+        """Reject writes; the Home Assistant integration is read-only."""
+        _LOGGER.warning("Ignoring write request for read-only XCC integration: %s", entity_id)
+        return False
 
     async def async_set_entity_value(self, entity_id: str, value: Any) -> bool:
-        """Set a value on the XCC controller (method name expected by entities)."""
-        try:
-            _LOGGER.info("🎛️ Setting entity %s to value %s", entity_id, value)
-
-            resolution = resolve_property(entity_id, self.data, self.entity_configs)
-            prop = resolution.prop
-            internal_name = resolution.internal_name
-
-            if not prop:
-                _LOGGER.error(
-                    "❌ Could not determine property name for entity %s. Tried methods: %s",
-                    entity_id,
-                    ", ".join(resolution.attempted) if resolution.attempted else "none",
-                )
-                _LOGGER.debug("Available entity types in data: %s", list((self.data or {}).keys()))
-                _LOGGER.debug("Available entity configs: %d properties", len(self.entity_configs))
-                return False
-
-            _LOGGER.debug(
-                "🔍 Property resolution: %s -> %s (method: %s)",
-                entity_id, prop, resolution.method,
-            )
-
-            _LOGGER.info(
-                "🔧 Setting XCC property %s to value %s for entity %s",
-                prop,
-                value,
-                entity_id,
-            )
-
-            # Use the persistent client if available, otherwise create a temporary one
-            if self._client is not None:
-                _LOGGER.debug("Using persistent XCC client for property setting")
-                client = self._client
-                try:
-                    success = await client.set_value(prop, value, internal_name=internal_name)
-                    if success:
-                        _LOGGER.info("✅ Successfully set XCC property %s to %s", prop, value)
-                        # Request immediate data refresh to update state
-                        _LOGGER.debug("Requesting data refresh after successful property set")
-                        await self.async_request_refresh()
-                        return True
-                    else:
-                        _LOGGER.error("❌ Failed to set XCC property %s to %s (client returned False)", prop, value)
-                        return False
-                except Exception as client_err:
-                    _LOGGER.error("❌ Exception during property setting with persistent client: %s", client_err)
-                    return False
-            else:
-                _LOGGER.debug("Creating temporary XCC client for property setting")
-                from .xcc_client import XCCClient
-
-                # Use same cookie file for temporary clients
-                cookie_file = f"{self.hass.config.config_dir}/.xcc_session_{self.ip_address.replace('.', '_')}.json"
-                try:
-                    async with XCCClient(
-                        ip=self.ip_address,
-                        username=self.username,
-                        password=self.password,
-                        cookie_file=cookie_file,
-                    ) as client:
-                        success = await client.set_value(prop, value, internal_name=internal_name)
-                        if success:
-                            _LOGGER.info("✅ Successfully set XCC property %s to %s", prop, value)
-                            # Request immediate data refresh to update state
-                            _LOGGER.debug("Requesting data refresh after successful property set")
-                            await self.async_request_refresh()
-                            return True
-                        else:
-                            _LOGGER.error("❌ Failed to set XCC property %s to %s (client returned False)", prop, value)
-                            return False
-                except Exception as client_err:
-                    _LOGGER.error("❌ Exception during property setting with temporary client: %s", client_err)
-                    return False
-
-        except Exception as err:
-            # Use locals().get() to safely access entity_id in case exception occurs before it's used
-            entity_id_safe = locals().get('entity_id', entity_id)  # entity_id is the parameter
-            _LOGGER.error("❌ Unexpected error setting value for entity %s: %s", entity_id_safe, err)
-            import traceback
-            _LOGGER.debug("Full traceback: %s", traceback.format_exc())
-            return False
+        """Reject writes from any stale legacy entity."""
+        return await self.async_set_value(entity_id, value)
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator and clean up resources."""

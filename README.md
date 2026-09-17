@@ -1,6 +1,6 @@
 # AC Heating XCC Heat Pump Controller Integration
 
-Home Assistant integration for AC Heating XCC heat pump controllers with photovoltaic integration. Monitor and control your heat pump system directly from Home Assistant with automatic entity discovery and bilingual support.
+Read-only Home Assistant integration for AC Heating XCC heat pump controllers with photovoltaic integration. Monitor your heat pump system directly from Home Assistant with automatic entity discovery and bilingual support.
 
 Inspired by work in https://github.com/Pdobry/xcc-graph.
 
@@ -65,15 +65,15 @@ The integration automatically discovers entities from these XCC pages:
 
 | Page | Description | Typical Entities |
 |------|-------------|------------------|
-| **Heating Circuits** | Temperature control, schedules. Every circuit the controller reports as enabled is polled; the first keeps bare `xcc_to_*` names, further circuits are namespaced `xcc_okruh<n>_*` | Temperature sensors, setpoint controls |
-| **Photovoltaics** | Battery management, export limits | Power sensors, battery controls |
+| **Heating Circuits** | Temperatures and schedules. Every circuit the controller reports as enabled is polled; the first keeps bare `xcc_to_*` names, further circuits are namespaced `xcc_okruh<n>_*` | Temperature sensors |
+| **Photovoltaics** | Battery management and export limits | Power sensors |
 | **PV Inverter** | Inverter configuration and telemetry | String/phase sensors, inverter settings |
-| **Hot Water** | Sanitization, circulation | Water temperature, heating controls |
-| **Auxiliary Source** | Backup heating system | Status sensors, operation controls |
-| **Spot Pricing** | Dynamic pricing optimization | Price sensors, optimization switches |
-| **System Status** | Overall system information | Status sensors, diagnostic data |
-| **Heat Pump Settings** | Advanced configuration (discovered dynamically) | Configuration switches, numbers |
-| **PV Battery SOC** | Monthly battery state-of-charge target curve | 12 monthly setpoint numbers (%) |
+| **Hot Water** | Sanitization and circulation | Water temperature sensors |
+| **Auxiliary Source** | Backup heating system | Status and binary sensors |
+| **Spot Pricing** | Dynamic pricing optimization | Price sensors |
+| **System Status** | Overall system information | Status and binary sensors, diagnostic data |
+| **Heat Pump Settings** | Advanced configuration (discovered dynamically) | Configuration sensors |
+| **PV Battery SOC** | Monthly battery state-of-charge target curve | State-of-charge sensors |
 
 ## 🧰 Standalone Tools
 
@@ -86,4 +86,3 @@ The repo root ships a few helper scripts, separate from the integration in `cust
 | `xcc_cli.py` | Interactive CLI to browse/search controller fields | ❌ Broken — depends on `field_database.json` and `scripts/analyze_known_pages.py`, neither of which exists in the repo |
 
 These are kept for reference/backup workflows. See [XCC_SCRAPER_README.md](XCC_SCRAPER_README.md) for scraper usage and caveats.
-

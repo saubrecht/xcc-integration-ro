@@ -1,35 +1,33 @@
-"""Test scan interval default value."""
+"""Regression checks for scan-interval configuration."""
+
+import importlib.util
+from pathlib import Path
+
+
+REPO = Path(__file__).parent.parent
+COORDINATOR = REPO / "custom_components" / "xcc" / "coordinator.py"
+
 
 def test_default_scan_interval():
-    """Test that the default scan interval is 120 seconds."""
-    
-    print("🔍 TESTING DEFAULT SCAN INTERVAL")
-    print("=" * 70)
-    
-    try:
-        # Import the constant
-        import sys
-        import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'custom_components', 'xcc'))
-        
-        from const import DEFAULT_SCAN_INTERVAL
-        
-        print(f"📊 DEFAULT_SCAN_INTERVAL: {DEFAULT_SCAN_INTERVAL} seconds")
-        
-        # Verify it's 120 seconds (2 minutes)
-        assert DEFAULT_SCAN_INTERVAL == 120, f"Expected 120 seconds, got {DEFAULT_SCAN_INTERVAL}"
-        
-        # Verify it's reasonable (between 1 minute and 10 minutes)
-        assert 60 <= DEFAULT_SCAN_INTERVAL <= 600, f"Scan interval should be between 60-600 seconds, got {DEFAULT_SCAN_INTERVAL}"
-        
-        print(f"✅ Default scan interval correctly set to {DEFAULT_SCAN_INTERVAL} seconds ({DEFAULT_SCAN_INTERVAL/60:.1f} minutes)")
-        
-        # Test passed if we reach here without any assertion errors
-        
-    except ImportError as e:
-        print(f"❌ Cannot import const module: {e}")
-        return False
-    except AssertionError as e:
-        print(f"❌ Assertion failed: {e}")
-        return False
+    """The default polling period remains two minutes."""
+    spec = importlib.util.spec_from_file_location(
+        "xcc_const", REPO / "custom_components" / "xcc" / "const.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
+    assert module.DEFAULT_SCAN_INTERVAL == 120
+
+
+def test_options_scan_interval_overrides_initial_config_value():
+    """A Configure-flow interval takes effect after its entry reloads.
+
+    This intentionally verifies the coordinator's initialization path without
+    importing Home Assistant's coordinator base class in this lightweight test
+    suite.
+    """
+    source = COORDINATOR.read_text(encoding="utf-8")
+    options_lookup = source.index("entry.options.get(", source.index("scan_interval"))
+    data_lookup = source.index("entry.data.get(CONF_SCAN_INTERVAL", options_lookup)
+
+    assert options_lookup < data_lookup

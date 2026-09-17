@@ -1,22 +1,19 @@
 # XCC Heat Pump Controller Integration for Home Assistant
 
-This integration allows you to monitor and control XCC heat pump controllers through Home Assistant. It automatically discovers all available parameters from your XCC controller and creates appropriate entities for monitoring and control.
+This read-only integration monitors XCC heat pump controllers through Home Assistant. It automatically discovers available values from your XCC controller and exposes them as sensor and binary-sensor entities.
 
 ## Features
 
 - **Automatic Discovery**: Automatically discovers all available parameters from your XCC controller
 - **Multi-language Support**: Supports English and Czech languages with automatic language detection
 - **Real-time Monitoring**: Monitors temperatures, pressures, power consumption, and system status
-- **Control Capabilities**: Allows setting of configurable parameters like setpoints and operation modes
+- **Read-only Operation**: Never changes controller settings
 - **Device Classes**: Proper device classes for sensors (temperature, power, energy, etc.)
 
 ## Supported Entity Types
 
-- **Sensors**: Read-only values like temperatures, pressures, power consumption
-- **Binary Sensors**: Status indicators like running, alarms, heating/cooling states
-- **Switches**: Boolean controls like enable/disable functions, modes
-- **Numbers**: Numeric controls like temperature setpoints, power limits
-- **Selects**: Enumerated controls like operation modes, schedules
+- **Sensors**: Read-only values like temperatures, pressures, and power consumption
+- **Binary Sensors**: Read-only on/off status such as running, alarms, heating, and cooling
 
 ## Installation
 
@@ -33,9 +30,6 @@ This integration allows you to monitor and control XCC heat pump controllers thr
        ├── entity.py
        ├── sensor.py
        ├── binary_sensor.py
-       ├── switch.py
-       ├── number.py
-       ├── select.py
        ├── xcc_client.py
        ├── const.py
        ├── strings.json
@@ -126,14 +120,9 @@ The integration automatically detects your Home Assistant language setting:
 - `coordinator.py`: Data update coordinator for XCC communication
 - `entity.py`: Base entity class with common functionality
 - `sensor.py`: Sensor entities for read-only values
-- `binary_sensor.py`: Binary sensor entities for status indicators
-- `switch.py`: Switch entities for boolean controls
-- `number.py`: Number entities for numeric controls
-- `select.py`: Select entities for enumerated controls
-- `button.py`: Button entities for actions
+- `binary_sensor.py`: Binary sensor entities for read-only status values
 - `descriptor_parser.py`: Parses descriptor XML into entity definitions
 - `entity_helpers.py`: Pure entity/device processing helpers (no Home Assistant import)
-- `value_writer.py`: Resolves an entity_id back to its XCC property for writes
 - `xcc_client.py`: XCC controller communication client
 - `const.py`: Constants and configuration
 - `strings.json`: English translations
