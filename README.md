@@ -81,7 +81,7 @@ The repo root ships a few helper scripts, separate from the integration in `cust
 
 | Tool | Purpose | Status |
 |------|---------|--------|
-| `find_hidden_switches.py` | Offline analysis of scraped XML to list hidden `_BOOL_i` switch fields | ✅ Works (needs `fresh_tuv_data/` or `tests/sample_data/`) |
+| `find_hidden_switches.py` | Offline-only analysis of scraped XML to list hidden `_BOOL_i` switch fields; the integration never exposes them | ✅ Works (needs `fresh_tuv_data/` or `tests/sample_data/`) |
 | `xcc_scraper.py` | Download all controller pages to disk | ⚠️ Partially broken — only the inline fallback client path works; the `custom_components/xcc` import path is API-incompatible |
 | `xcc_cli.py` | Interactive CLI to browse/search controller fields | ❌ Broken — depends on `field_database.json` and `scripts/analyze_known_pages.py`, neither of which exists in the repo |
 

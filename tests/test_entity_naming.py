@@ -6,9 +6,9 @@ real parsing pipeline (``parse_xml_entities`` →
 entity_ids obey the ``xcc_<slug>`` convention — no IP addresses, no
 legacy ``<device>_<ip>_<prop>`` shape, no bare property-name leftovers.
 
-Also spot-checks a handful of known friendly-name mappings that come from
-``DESCRIPTOR_OVERRIDES`` (STATUS_XML_DESCRIPTOR, HIDDEN_BINARY_SENSORS,
-HIDDEN_SWITCHES) so a regression in the override merge is caught here too.
+Also spot-checks known friendly-name mappings from ``DESCRIPTOR_OVERRIDES``
+(STATUS_XML_DESCRIPTOR and HIDDEN_BINARY_SENSORS) so a regression in the
+override merge is caught here too.
 """
 
 from __future__ import annotations
@@ -162,9 +162,6 @@ def test_entity_ids_have_xcc_prefix_and_no_ip(sample_data_dir):
         ("BLOKYSPOTREBY3-OK", "xcc_blokyspotreby3_ok", "HP heating DHW"),
         # STATUS_XML_DESCRIPTOR entry (STATUS.XML has no paired descriptor file)
         ("SVYKON", "xcc_svykon", "HP power"),
-        # HIDDEN_SWITCHES override
-        ("TO-CONFIG-CHLAZENI", "xcc_to_config_chlazeni",
-         "Heating circuit cooling mode configuration"),
     ],
 )
 def test_known_friendly_names(sample_data_dir, prop, expected_id, expected_en):

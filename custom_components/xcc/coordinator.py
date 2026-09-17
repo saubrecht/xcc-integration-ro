@@ -696,7 +696,7 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                 )
 
                 # Apply DESCRIPTOR_OVERRIDES — the single source of manual metadata edits.
-                # See const.py for the grouping (STATUS_XML_DESCRIPTOR / HIDDEN_SWITCHES /
+                # See const.py for the grouping (STATUS_XML_DESCRIPTOR /
                 # HIDDEN_BINARY_SENSORS). Every entry replaces any descriptor-derived config
                 # for that prop because the override table is curated by hand from TRANSF.XSL
                 # and field-suffix analysis, while descriptor parsing infers types from

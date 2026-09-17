@@ -247,37 +247,13 @@ for _i in range(10):
         "writable": False,
     }
 
-# Hidden switches - fields that appear in data pages with _BOOL_i (writable) but have no
-# <switch> or <choice> control in descriptor files. These are typically service technician
-# settings or installation-time configuration.  We expose them as switches in HA to allow
-# advanced users to control hidden features.
-#
-# Found by running: python find_hidden_switches.py
-# Total hidden switches found: 217 across all pages
-#
-# Only the most useful/safe ones are exposed here. Others remain hidden to avoid
-# accidental misconfiguration.
-HIDDEN_SWITCHES: dict = {
-    # Cooling mode configuration - enables reversible heat pump operation
-    "TO-CONFIG-CHLAZENI": {
-        "friendly_name": "Konfigurace chlazení topného okruhu",
-        "friendly_name_en": "Heating circuit cooling mode configuration",
-        "unit": "",
-        "entity_type": "switch",
-        "writable": True,
-        "device_class": None,
-        "note": "Enable cooling mode for this heating circuit (requires compatible heat pump hardware)",
-    },
-    # Add more hidden switches here as needed
-}
-
 # Hidden binary sensors - fields that appear in data pages with _BOOL_i (parsed as writable
 # switch) but are actually read-only status outputs.  The consumption prioritizer fields
 # (BLOKYSPOTREBY) are the main example: they show which consumer the heat pump is currently
 # serving, not something a user would ever toggle.
 #
-# Like HIDDEN_SWITCHES, these entries OVERRIDE the type inferred from the _BOOL_i register
-# suffix so the entity appears as a binary_sensor instead of a switch.
+# These entries override the type inferred from the _BOOL_i register suffix so
+# the entity appears as a read-only binary_sensor instead of a switch.
 HIDDEN_BINARY_SENSORS: dict = {
     # Consumption-prioritizer "active" flags (BLOKYSPOTREBY = consumption block)
     # Each consumer has a -OK flag that turns 1 when the HP is currently serving it.
@@ -383,11 +359,10 @@ HIDDEN_BINARY_SENSORS: dict = {
 # Sources are grouped above purely for readability; semantically all entries replace any
 # config inferred from descriptor XML or from the _BOOL_i register suffix:
 #   * STATUS_XML_DESCRIPTOR  — metadata for STATUS.XML (no paired descriptor file)
-#   * HIDDEN_SWITCHES        — promotes hidden _BOOL_i fields to writable switches
 #   * HIDDEN_BINARY_SENSORS  — pins read-only _BOOL_i status fields as binary_sensor
-# Add new manual overrides to whichever of the three source dicts fits the intent.
+# Hidden writable settings are intentionally excluded. Use
+# ``find_hidden_switches.py`` as the offline analysis tool for them instead.
 DESCRIPTOR_OVERRIDES: dict = {
     **STATUS_XML_DESCRIPTOR,
-    **HIDDEN_SWITCHES,
     **HIDDEN_BINARY_SENSORS,
 }

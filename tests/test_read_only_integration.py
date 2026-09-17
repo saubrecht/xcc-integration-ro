@@ -43,3 +43,13 @@ def test_coordinator_holds_its_lock_for_the_complete_poll():
 
     assert "async with self._update_lock:" in wrapper
     assert "return await self._async_update_data_locked()" in wrapper
+
+
+def test_hidden_switch_analysis_is_not_consumed_by_the_integration():
+    """Hidden writable fields belong exclusively to the offline analysis tool."""
+    const_source = (REPO / "custom_components" / "xcc" / "const.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "HIDDEN_SWITCHES:" not in const_source
+    assert "TO-CONFIG-CHLAZENI" not in const_source
