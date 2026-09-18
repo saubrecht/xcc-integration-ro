@@ -1,0 +1,80 @@
+blueprint:
+  name: Deco household Wi-Fi presence notifications
+  description: >-
+    Notify when selected household mobile devices connect to or disconnect from
+    the Deco network. Each new state must remain unchanged for the configured
+    delay, which suppresses the short disconnect/reconnect events produced when
+    a device roams between Deco mesh nodes.
+  domain: automation
+  input:
+    tracked_devices:
+      name: Household mobile devices
+      description: Select the device_tracker entities supplied by the Deco integration.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: device_tracker
+    confirmation_delay:
+      name: Confirmation delay
+      description: >-
+        How long the Wi-Fi state must remain changed before a notification is
+        sent. Five minutes is a good starting point for Deco mesh roaming.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: minutes
+          mode: slider
+    notification_service:
+      name: Notification service
+      description: For example, notify.mobile_app_your_phone or notify.notify.
+      selector:
+        text:
+    device_aliases:
+      name: Device aliases (optional)
+      description: >-
+        A YAML mapping of Deco device_tracker entity IDs to the names that
+        should appear in notifications. Leave empty to use the entity's device
+        name. For example:
+        device_tracker.deco_alices_iphone: Alice
+        device_tracker.deco_bobs_pixel: Bob
+      default: "{}"
+      selector:
+        text:
+          multiline: true
+
+mode: parallel
+max: 20
+
+trigger:
+  - platform: state
+    entity_id: !input tracked_devices
+    to: home
+    for:
+      minutes: !input confirmation_delay
+    id: connected
+  - platform: state
+    entity_id: !input tracked_devices
+    to: not_home
+    for:
+      minutes: !input confirmation_delay
+    id: disconnected
+
+# Ignore initial/unavailable states: only a confirmed Deco home/not_home state
+# represents an arrival or departure.
+condition:
+  - condition: template
+    value_template: "{{ trigger.from_state is not none }}"
+
+action:
+  - variables:
+      aliases: !input device_aliases
+  - service: !input notification_service
+    data:
+      title: Domácnost
+      message: >-
+        {{ (aliases | from_yaml).get(trigger.entity_id, trigger.to_state.name) }}
+        {{ 'je' if trigger.id == 'connected' else 'není' }} doma.
