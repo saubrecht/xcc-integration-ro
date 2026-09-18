@@ -77,10 +77,9 @@ action:
       aliases: !input device_aliases
       services: !input notification_services
   - repeat:
-      for_each: >-
-        {{ services.splitlines() | map('trim') | reject('eq', '') | list }}
+      for_each: "{{ services.splitlines() | map('trim') | reject('eq', '') | list }}"
       sequence:
-        - service: "{{ repeat.item }}"
+        - action: "{{ repeat.item }}"
           data:
             title: Domácnost
             message: >-
