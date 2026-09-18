@@ -31,11 +31,10 @@ blueprint:
     notification_services:
       name: Notification services
       description: >-
-        Enter one notification service per line, for example
-        notify.mobile_app_your_phone and notify.mobile_app_partner_phone.
+        Add each notification service, for example notify.mobile_app_your_phone.
       selector:
         text:
-          multiline: true
+          multiple: true
     device_aliases:
       name: Device aliases (optional)
       description: >-
@@ -44,10 +43,9 @@ blueprint:
         name. For example:
         device_tracker.deco_alices_iphone: Alice
         device_tracker.deco_bobs_pixel: Bob
-      default: "{}"
+      default: {}
       selector:
-        text:
-          multiline: true
+        object:
 
 mode: parallel
 max: 20
@@ -75,15 +73,14 @@ condition:
 action:
   - variables:
       aliases: !input device_aliases
-      services: !input notification_services
   - repeat:
-      for_each: "{{ services.splitlines() | map('trim') | reject('eq', '') | list }}"
+      for_each: !input notification_services
       sequence:
         - action: "{{ repeat.item }}"
           data: >-
             {{ {
               'title': 'Domácnost',
-              'message': (aliases | from_yaml).get(
+              'message': aliases.get(
                 trigger.entity_id, trigger.to_state.name
               ) ~ ' ' ~ ('je' if trigger.id == 'connected' else 'není') ~
               ' doma.'
