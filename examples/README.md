@@ -28,3 +28,14 @@ device_tracker.deco_bobs_pixel: Bob
 Both joining and leaving must remain stable for the confirmation interval. That
 prevents duplicate “left” and “connected” alerts when a phone briefly changes
 between Deco mesh nodes.
+
+## Confirmed Wi-Fi presence
+
+`deco_confirmed_wifi_presence.yaml` is the more robust option for a Deco mesh.
+Create one `input_boolean` helper for each household device, then create one
+automation from this blueprint for that device and helper. Set the helper to
+match the device's current presence before enabling the automation.
+
+The helper changes only after a confirmed arrival or departure. A short mesh
+handoff therefore leaves it unchanged, and the later return to `home` does not
+generate a false arrival notification.

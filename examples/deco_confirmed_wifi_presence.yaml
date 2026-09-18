@@ -1,0 +1,111 @@
+blueprint:
+  name: Deco confirmed Wi-Fi presence
+  description: >-
+    Maintain confirmed Wi-Fi presence for one Deco-tracked device and notify
+    only when that confirmed state changes. Brief Deco mesh roaming events do
+    not change the confirmed state, so they produce no false arrival alert.
+  domain: automation
+  input:
+    tracked_device:
+      name: Deco-tracked device
+      description: Select one device_tracker entity supplied by the Deco integration.
+      selector:
+        entity:
+          filter:
+            - domain: device_tracker
+    confirmed_presence:
+      name: Confirmed Wi-Fi presence helper
+      description: >-
+        An input_boolean dedicated to this device. Set it to on initially when
+        the device is currently at home, otherwise set it to off.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    device_alias:
+      name: Device alias (optional)
+      description: Used in alerts. Leave empty to use the Deco entity's name.
+      default: ""
+      selector:
+        text:
+    confirmation_delay:
+      name: Confirmation delay
+      description: The Wi-Fi state must remain unchanged for this long.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: minutes
+          mode: slider
+    notification_targets:
+      name: Notification targets
+      description: Select one or more notify entities to receive the alert.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: notify
+
+mode: single
+
+variables:
+  selected_alias: !input device_alias
+
+trigger:
+  - platform: state
+    entity_id: !input tracked_device
+    to: not_home
+    for:
+      minutes: !input confirmation_delay
+    id: departed
+  - platform: state
+    entity_id: !input tracked_device
+    to: home
+    for:
+      minutes: !input confirmation_delay
+    id: arrived
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.from_state is not none }}"
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: departed
+          - condition: state
+            entity_id: !input confirmed_presence
+            state: "on"
+        sequence:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input confirmed_presence
+          - action: notify.send_message
+            target:
+              entity_id: !input notification_targets
+            data:
+              title: Domácnost
+              message: >-
+                {{ selected_alias if selected_alias else
+                trigger.to_state.name }} není doma.
+      - conditions:
+          - condition: trigger
+            id: arrived
+          - condition: state
+            entity_id: !input confirmed_presence
+            state: "off"
+        sequence:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: !input confirmed_presence
+          - action: notify.send_message
+            target:
+              entity_id: !input notification_targets
+            data:
+              title: Domácnost
+              message: >-
+                {{ selected_alias if selected_alias else
+                trigger.to_state.name }} je doma.
