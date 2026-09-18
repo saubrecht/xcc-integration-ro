@@ -10,8 +10,15 @@ the Deco integration.
    import the YAML file from this repository.
 2. Create an automation from **Deco household Wi-Fi presence notifications**.
 3. Select the Deco `device_tracker` entities for the household phones and
-   tablets, select a notification service, and retain the five-minute delay (or
-   adjust it to suit the mesh).
+   tablets, enter one or more notification services (one service per line), and
+   retain the five-minute delay (or adjust it to suit the mesh).
+
+For example, to alert two household phones, enter:
+
+```text
+notify.mobile_app_alices_phone
+notify.mobile_app_bobs_phone
+```
 
 Optionally set **Device aliases** to a YAML mapping such as the following. The
 alias is used in alerts; devices omitted from the mapping retain their Deco name.

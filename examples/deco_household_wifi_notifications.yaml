@@ -28,11 +28,14 @@ blueprint:
           step: 1
           unit_of_measurement: minutes
           mode: slider
-    notification_service:
-      name: Notification service
-      description: For example, notify.mobile_app_your_phone or notify.notify.
+    notification_services:
+      name: Notification services
+      description: >-
+        Enter one notification service per line, for example
+        notify.mobile_app_your_phone and notify.mobile_app_partner_phone.
       selector:
         text:
+          multiline: true
     device_aliases:
       name: Device aliases (optional)
       description: >-
@@ -72,9 +75,15 @@ condition:
 action:
   - variables:
       aliases: !input device_aliases
-  - service: !input notification_service
-    data:
-      title: Domácnost
-      message: >-
-        {{ (aliases | from_yaml).get(trigger.entity_id, trigger.to_state.name) }}
-        {{ 'je' if trigger.id == 'connected' else 'není' }} doma.
+      services: !input notification_services
+  - repeat:
+      for_each: >-
+        {{ services.splitlines() | map('trim') | reject('eq', '') | list }}
+      sequence:
+        - service: "{{ repeat.item }}"
+          data:
+            title: Domácnost
+            message: >-
+              {{ (aliases | from_yaml).get(trigger.entity_id,
+              trigger.to_state.name) }} {{ 'je' if trigger.id == 'connected'
+              else 'není' }} doma.
