@@ -29,12 +29,14 @@ blueprint:
           unit_of_measurement: minutes
           mode: slider
     notification_services:
-      name: Notification services
+      name: Notification targets
       description: >-
-        Add each notification service, for example notify.mobile_app_your_phone.
+        Select one or more notify entities, such as notify.alices_phone.
       selector:
-        text:
+        entity:
           multiple: true
+          filter:
+            - domain: notify
     device_aliases:
       name: Device aliases (optional)
       description: >-
@@ -73,15 +75,11 @@ condition:
 action:
   - variables:
       aliases: !input device_aliases
-  - repeat:
-      for_each: !input notification_services
-      sequence:
-        - action: "{{ repeat.item }}"
-          data: >-
-            {{ {
-              'title': 'Domácnost',
-              'message': aliases.get(
-                trigger.entity_id, trigger.to_state.name
-              ) ~ ' ' ~ ('je' if trigger.id == 'connected' else 'není') ~
-              ' doma.'
-            } }}
+  - action: notify.send_message
+    target:
+      entity_id: !input notification_services
+    data:
+      title: Domácnost
+      message: >-
+        {{ aliases.get(trigger.entity_id, trigger.to_state.name) }}
+        {{ 'je' if trigger.id == 'connected' else 'není' }} doma.
