@@ -80,9 +80,11 @@ action:
       for_each: "{{ services.splitlines() | map('trim') | reject('eq', '') | list }}"
       sequence:
         - action: "{{ repeat.item }}"
-          data:
-            title: Domácnost
-            message: >-
-              {{ (aliases | from_yaml).get(trigger.entity_id,
-              trigger.to_state.name) }} {{ 'je' if trigger.id == 'connected'
-              else 'není' }} doma.
+          data: >-
+            {{ {
+              'title': 'Domácnost',
+              'message': (aliases | from_yaml).get(
+                trigger.entity_id, trigger.to_state.name
+              ) ~ ' ' ~ ('je' if trigger.id == 'connected' else 'není') ~
+              ' doma.'
+            } }}
