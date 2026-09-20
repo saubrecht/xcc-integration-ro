@@ -115,7 +115,7 @@ class XCCEntity(CoordinatorEntity[XCCDataUpdateCoordinator]):
             model=device_info["model"],
             sw_version=device_info.get("sw_version"),
             configuration_url=device_info.get("configuration_url"),
-            via_device=device_info.get("via_device"),  # Link to parent device if applicable
+            via_device_id=device_info.get("via_device_id"),
         )
 
         # Set feature-level entity name (has_entity_name=True composes the

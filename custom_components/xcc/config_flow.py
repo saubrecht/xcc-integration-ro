@@ -112,7 +112,10 @@ class XCCConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Return the options flow handler."""
-        return XCCOptionsFlowHandler(config_entry)
+        # OptionsFlow now exposes the active config entry through its own
+        # read-only ``config_entry`` property. Passing and assigning it here
+        # raises AttributeError on current Home Assistant versions.
+        return XCCOptionsFlowHandler()
 
     async def async_step_user(
         self,
@@ -150,10 +153,6 @@ class XCCConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class XCCOptionsFlowHandler(OptionsFlow):
     """Handle options for the XCC integration."""
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Store the config entry for option lookups."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self,

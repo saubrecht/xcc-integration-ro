@@ -72,6 +72,7 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
         # Store discovered entities and their metadata
         self.entities: dict[str, dict[str, Any]] = {}
         self.device_info: dict[str, Any] = {}
+        self.parent_device_id: str | None = None
         self._client = None  # Persistent XCC client for session reuse
         self.descriptor_parser = None  # Parser for entity type detection
         self.entity_configs = {}  # Cached entity configurations
@@ -481,13 +482,13 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                 # subtitle that has_entity_name renders in cards/dialogs is
                 # short (e.g. "AW16-3P"). Multi-controller installs stay
                 # distinguishable via the IP-namespaced identifiers above
-                # and via_device link to the parent XCC Controller entry.
+                # and their parent-device ID link.
                 "name": config["name"],
                 "manufacturer": "XCC",
                 "model": config["model"],
                 "sw_version": "Unknown",
                 "configuration_url": f"http://{self.ip_address}",
-                "via_device": (DOMAIN, self.ip_address),  # Link to main controller
+                "via_device_id": self.parent_device_id,
             }
 
     def get_device_info_for_entity(self, entity_id: str) -> dict[str, Any]:
