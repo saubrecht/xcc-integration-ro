@@ -36,10 +36,13 @@ CONF_REGENERATE_ENTITY_IDS: Final = "regenerate_entity_ids"
 # Default values
 DEFAULT_USERNAME: Final = "xcc"
 DEFAULT_PASSWORD: Final = "xcc"
-DEFAULT_SCAN_INTERVAL: Final = 60  # seconds (1 minute)
+DEFAULT_SCAN_INTERVAL: Final = 720  # seconds (12 minutes)
 DEFAULT_TIMEOUT: Final = 10  # seconds
+# Pause between normal XCC page requests. The controller permits just one
+# connection and can reject rapid page polling.
+REQUEST_DELAY_SECONDS: Final = 1.2
 # Consecutive incomplete/failed polls before binary_sensor.xcc_data_incomplete
-# (+ a Repairs issue) fires. 5 x 60 s default scan ~= 5 min of missing data.
+# (+ a Repairs issue) fires. 5 x 720 s default scan ~= 60 min of missing data.
 DEFAULT_MISSING_PAGE_ALERT_POLLS: Final = 5
 
 # Language options

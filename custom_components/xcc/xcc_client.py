@@ -15,9 +15,11 @@ from yarl import URL
 
 try:
     from .descriptor_parser import XCCDescriptorParser
+    from .const import REQUEST_DELAY_SECONDS
 except ImportError:
     # For standalone usage
     from descriptor_parser import XCCDescriptorParser
+    REQUEST_DELAY_SECONDS = 1.2
 
 # Global lock to prevent concurrent authentication attempts to the same IP
 _auth_locks = {}
@@ -697,7 +699,9 @@ class XCCClient:
 
         # Retry logic for connection limit errors
         max_retries = 3
-        retry_delay = 2  # seconds
+        # Retry after 4 seconds, then 8 seconds. The controller has a single
+        # connection slot and needs time to release it after a failed request.
+        retry_delay = 4  # seconds
 
         for attempt in range(max_retries):
             try:
@@ -916,9 +920,9 @@ class XCCClient:
         results = {}
         for i, page in enumerate(pages):
             try:
-                # Add small delay between requests to avoid connection limit
+                # Pace requests so the controller is not overwhelmed.
                 if i > 0:
-                    await asyncio.sleep(0.2)  # 200ms delay between requests
+                    await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
                 results[page] = await self.fetch_page(page)
                 _LOGGER.debug(
@@ -1454,8 +1458,8 @@ async def fetch_all_data_with_descriptors(
             else:
                 print(f"✗ Failed to fetch data {page}")
 
-            # Small delay between requests
-            await asyncio.sleep(0.2)
+            # Pace requests so the controller is not overwhelmed.
+            await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
         except Exception as e:
             print(f"✗ Error fetching data {page}: {e}")
@@ -1470,8 +1474,8 @@ async def fetch_all_data_with_descriptors(
             else:
                 print(f"✗ Failed to fetch descriptor {page}")
 
-            # Small delay between requests
-            await asyncio.sleep(0.2)
+            # Pace requests so the controller is not overwhelmed.
+            await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
         except Exception as e:
             print(f"✗ Error fetching descriptor {page}: {e}")

@@ -24,6 +24,7 @@ from .const import (
     DESCRIPTOR_OVERRIDES,
     DOMAIN,
     LANGUAGE_ENGLISH,
+    REQUEST_DELAY_SECONDS,
     XCC_DATA_PAGES,
     XCC_DESCRIPTOR_PAGES,
 )
@@ -236,9 +237,16 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug(
                 "Update triggered by: %s", getattr(self, "_update_source", "unknown")
             )
+            # A page batch is deliberately paced. Allow its request pauses in
+            # addition to the normal controller timeout, otherwise a healthy
+            # multi-page poll could time out solely because of the delay.
+            batch_timeout = max(
+                DEFAULT_TIMEOUT,
+                DEFAULT_TIMEOUT + (len(data_pages) - 1) * REQUEST_DELAY_SECONDS,
+            )
             pages_data = await asyncio.wait_for(
                 client.fetch_pages(data_pages),
-                timeout=DEFAULT_TIMEOUT,
+                timeout=batch_timeout,
             )
             _LOGGER.debug(
                 "Successfully fetched %d pages from XCC controller", len(pages_data)
@@ -675,8 +683,8 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                     else:
                         _LOGGER.warning("Failed to load descriptor %s", page)
 
-                    # Small delay between requests
-                    await asyncio.sleep(0.1)
+                    # Pace descriptor requests just like regular data pages.
+                    await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
                 except asyncio.CancelledError:
                     _LOGGER.warning("Request cancelled while loading descriptor %s - skipping", page)
