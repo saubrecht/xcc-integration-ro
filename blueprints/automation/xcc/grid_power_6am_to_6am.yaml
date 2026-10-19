@@ -1,0 +1,193 @@
+blueprint:
+  name: Grid power consumption, daily 06:00–06:00
+  description: >-
+    Integrates a grid-power sensor into a running consumption total from 06:00
+    to 06:00 each day. The source must report instantaneous power in W or kW;
+    it may update at any interval (for example, every seven minutes). The
+    blueprint uses trapezoidal integration between consecutive samples and
+    ignores negative values, so exported power is not counted as consumption.
+
+    Create the required helpers before importing this blueprint:
+      * input_number for the accumulated energy in kWh
+      * input_number for the last power sample in W (minimum 0)
+      * input_datetime with both a date and time for the last sample
+      * input_boolean indicating that the helpers have been initialized
+
+    The total is reset at 06:00 in Home Assistant's local timezone. If a gap
+    between samples exceeds the configured maximum, the blueprint records the
+    new sample without estimating energy for that gap.
+  domain: automation
+  homeassistant:
+    min_version: 2024.6.0
+  input:
+    source_power:
+      name: Grid power sensor
+      description: Instantaneous grid power. Negative values are treated as export and ignored.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: power
+    source_power_unit:
+      name: Grid power unit
+      description: Unit reported by the grid-power sensor.
+      default: W
+      selector:
+        select:
+          options:
+            - W
+            - kW
+    total_energy:
+      name: Accumulated grid consumption helper
+      description: input_number that will hold the current 06:00–06:00 total in kWh.
+      selector:
+        entity:
+          filter:
+            - domain: input_number
+    last_power:
+      name: Last power sample helper
+      description: input_number used internally to retain the previous power sample in W.
+      selector:
+        entity:
+          filter:
+            - domain: input_number
+    last_sample:
+      name: Last sample time helper
+      description: input_datetime with both date and time enabled, used internally.
+      selector:
+        entity:
+          filter:
+            - domain: input_datetime
+    initialized:
+      name: Initialization helper
+      description: input_boolean used internally. Leave it off when first creating the automation.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    max_gap_minutes:
+      name: Maximum sample gap
+      description: Do not estimate consumption across a longer gap than this. Set above the sensor's update interval.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          unit_of_measurement: min
+          mode: box
+
+mode: queued
+max: 10
+
+trigger:
+  - platform: time
+    at: "06:00:00"
+    id: daily_reset
+  - platform: state
+    entity_id: !input source_power
+    id: power_update
+
+action:
+  - variables:
+      source_power: !input source_power
+      source_power_unit: !input source_power_unit
+      total_energy: !input total_energy
+      last_power: !input last_power
+      last_sample: !input last_sample
+      initialized: !input initialized
+      max_gap_minutes: !input max_gap_minutes
+      source_power_w: >-
+        {{ states(source_power) | float(0)
+           * (1000 if source_power_unit == 'kW' else 1) }}
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: daily_reset
+        sequence:
+          - service: input_number.set_value
+            target:
+              entity_id: "{{ total_energy }}"
+            data:
+              value: 0
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(source_power) not in ['unknown', 'unavailable', 'none'] }}"
+                sequence:
+                  - service: input_number.set_value
+                    target:
+                      entity_id: "{{ last_power }}"
+                    data:
+                      value: "{{ [source_power_w | float(0), 0] | max }}"
+                  - service: input_datetime.set_datetime
+                    target:
+                      entity_id: "{{ last_sample }}"
+                    data:
+                      datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ initialized }}"
+            default:
+              - service: input_boolean.turn_off
+                target:
+                  entity_id: "{{ initialized }}"
+      - conditions:
+          - condition: trigger
+            id: power_update
+          - condition: template
+            value_template: "{{ states(source_power) not in ['unknown', 'unavailable', 'none'] }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input initialized
+                    state: "off"
+                sequence:
+                  - service: input_number.set_value
+                    target:
+                      entity_id: "{{ last_power }}"
+                    data:
+                      value: "{{ [source_power_w | float(0), 0] | max }}"
+                  - service: input_datetime.set_datetime
+                    target:
+                      entity_id: "{{ last_sample }}"
+                    data:
+                      datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                  - service: input_number.set_value
+                    target:
+                      entity_id: "{{ total_energy }}"
+                    data:
+                      value: 0
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ initialized }}"
+            default:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: >-
+                          {{ 0 < (as_timestamp(now()) - as_timestamp(states(last_sample)))
+                             <= ((max_gap_minutes | float(20)) * 60) }}
+                    sequence:
+                      - service: input_number.set_value
+                        target:
+                          entity_id: "{{ total_energy }}"
+                        data:
+                          value: >-
+                            {{ (states(total_energy) | float(0))
+                               + ((([states(last_power) | float(0), 0] | max)
+                                   + ([source_power_w | float(0), 0] | max))
+                                  / 2
+                                  * (as_timestamp(now()) - as_timestamp(states(last_sample)) )
+                                  / 3600000) }}
+              - service: input_number.set_value
+                target:
+                  entity_id: "{{ last_power }}"
+                data:
+                  value: "{{ [source_power_w | float(0), 0] | max }}"
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: "{{ last_sample }}"
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"

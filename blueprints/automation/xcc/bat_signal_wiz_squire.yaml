@@ -1,0 +1,154 @@
+blueprint:
+  name: Bat signal — WiZ Squire timed light effect
+  description: >-
+    Activate a selected WiZ light from a RODRET dimmer (or any supported
+    device trigger), apply a chosen WiZ effect, and restore the exact original
+    light state when the signal finishes. The original state is held in a
+    dynamic scene snapshot, so this includes power state, brightness, colour,
+    colour temperature, and effect.
+
+    A second trigger while active keeps the bat-signal effect selected and
+    adds one configured signal period to the timer's remaining time. The
+    default period is one minute.
+
+    Create an input_boolean and a timer helper before importing this blueprint.
+    Give the dynamic-scene ID a unique value for each blueprint instance.
+  domain: automation
+  homeassistant:
+    min_version: 2024.6.0
+  input:
+    activation_trigger:
+      name: RODRET activation trigger
+      description: >-
+        Choose the desired RODRET device trigger, for example its on-button
+        press. This generic trigger selector also supports ZHA, Zigbee2MQTT,
+        and other supported integrations.
+      selector:
+        trigger: {}
+    target_light:
+      name: WiZ Squire light
+      selector:
+        entity:
+          filter:
+            - domain: light
+    bat_signal_effect:
+      name: WiZ effect / light mode
+      description: >-
+        Enter an effect name exactly as listed in the light's effect_list
+        attribute, for example Party, Fireplace, or Ocean. Leave blank to
+        turn the light on without changing its effect.
+      default: ""
+      selector:
+        text: {}
+    signal_period_minutes:
+      name: Signal period
+      description: Each activation adds this many minutes to the remaining timer.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    signal_timer:
+      name: Bat-signal timer helper
+      description: Timer helper that controls how long the effect remains active.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+    signal_active:
+      name: Bat-signal active helper
+      description: Input boolean helper used internally to retain the active state.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    snapshot_scene_id:
+      name: Snapshot scene ID
+      description: >-
+        A unique lower-case scene ID, without the "scene." prefix, for example
+        bat_signal_squire. It is used internally to store the original state.
+      default: bat_signal_snapshot
+      selector:
+        text:
+
+mode: queued
+max: 20
+
+triggers:
+  - triggers: !input activation_trigger
+  - platform: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input signal_timer
+    id: timer_finished
+
+action:
+  - variables:
+      target_light: !input target_light
+      signal_timer: !input signal_timer
+      signal_active: !input signal_active
+      snapshot_scene_id: !input snapshot_scene_id
+      bat_signal_effect: !input bat_signal_effect
+      signal_period_minutes: !input signal_period_minutes
+      period_seconds: "{{ (signal_period_minutes | float(1) * 60) | int }}"
+      remaining_seconds: >-
+        {% set finishes_at = state_attr(signal_timer, 'finishes_at') %}
+        {{ [as_timestamp(finishes_at, 0) - as_timestamp(now()), 0] | max | int }}
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: timer_finished
+          - condition: state
+            entity_id: !input signal_active
+            state: "on"
+        sequence:
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ 'scene.' ~ snapshot_scene_id }}"
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ signal_active }}"
+      - conditions:
+          - condition: trigger
+            id: timer_finished
+        sequence: []
+    default:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: !input signal_active
+                state: "off"
+            sequence:
+              - service: scene.create
+                data:
+                  scene_id: "{{ snapshot_scene_id }}"
+                  snapshot_entities:
+                    - "{{ target_light }}"
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: "{{ signal_active }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ bat_signal_effect | trim != '' }}"
+            sequence:
+              - service: light.turn_on
+                target:
+                  entity_id: "{{ target_light }}"
+                data:
+                  effect: "{{ bat_signal_effect }}"
+        default:
+          - service: light.turn_on
+            target:
+              entity_id: "{{ target_light }}"
+      - service: timer.start
+        target:
+          entity_id: "{{ signal_timer }}"
+        data:
+          duration: >-
+            {% set seconds = (period_seconds | int)
+                 + (remaining_seconds if is_state(signal_active, 'on') else 0) %}
+            {{ '%02d:%02d:%02d' | format(seconds // 3600, (seconds % 3600) // 60, seconds % 60) }}

@@ -1,0 +1,222 @@
+blueprint:
+  name: Induction hob — power-level events with pulse hold
+  description: >-
+    Classify an induction hob's instantaneous power sensor into four configurable
+    levels and fire a custom event whenever its tracked level changes.
+
+    Induction hobs can pulse their power on and off at lower heat settings. A
+    lower reading is therefore held for the configured downshift delay before
+    it changes the tracked level. If the power returns to the current level or
+    higher, the pending downshift is cancelled. A continued large reduction
+    steps down one level at a time, firing the events in reverse order; this
+    lets a ventilation automation reduce its speed gradually.
+
+    Create a dedicated timer helper and an input_select helper before importing
+    this blueprint. Configure the input_select options exactly as: 0, 1, 2, 3,
+    4. Level 0 means off. Keep the four watt thresholds strictly increasing.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    power_sensor:
+      name: Hob power sensor
+      description: Wireless sensor reporting the hob's current power in watts.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: power
+    tracked_level:
+      name: Tracked level helper
+      description: Dedicated input_select with options 0, 1, 2, 3, and 4.
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+    downshift_timer:
+      name: Downshift timer helper
+      description: Dedicated timer helper used for pulse filtering and gradual downshifts.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+    level_1_watts:
+      name: Level 1 threshold
+      description: Power at or above which level 1 is active.
+      default: 300
+      selector:
+        number:
+          min: 1
+          max: 10000
+          step: 10
+          unit_of_measurement: W
+          mode: box
+    level_2_watts:
+      name: Level 2 threshold
+      description: Must be higher than level 1.
+      default: 900
+      selector:
+        number:
+          min: 1
+          max: 10000
+          step: 10
+          unit_of_measurement: W
+          mode: box
+    level_3_watts:
+      name: Level 3 threshold
+      description: Must be higher than level 2.
+      default: 1800
+      selector:
+        number:
+          min: 1
+          max: 10000
+          step: 10
+          unit_of_measurement: W
+          mode: box
+    level_4_watts:
+      name: Level 4 threshold
+      description: Must be higher than level 3.
+      default: 2800
+      selector:
+        number:
+          min: 1
+          max: 10000
+          step: 10
+          unit_of_measurement: W
+          mode: box
+    downshift_delay_seconds:
+      name: Downshift delay
+      description: >-
+        How long power must remain below the tracked level before one lower
+        level event fires. The default 30 seconds filters typical power pulses.
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          step: 5
+          unit_of_measurement: s
+          mode: box
+    event_type:
+      name: Event type
+      description: >-
+        Custom event fired for level changes. Use this in a Manual event
+        received trigger in ventilation automations.
+      default: induction_hob_power_level
+      selector:
+        text:
+
+mode: restart
+
+triggers:
+  - trigger: state
+    entity_id: !input power_sensor
+    id: power_changed
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input downshift_timer
+    id: downshift_timer_finished
+
+actions:
+  - variables:
+      power_sensor: !input power_sensor
+      tracked_level_entity: !input tracked_level
+      downshift_timer: !input downshift_timer
+      level_1_watts: !input level_1_watts
+      level_2_watts: !input level_2_watts
+      level_3_watts: !input level_3_watts
+      level_4_watts: !input level_4_watts
+      downshift_delay_seconds: !input downshift_delay_seconds
+      power_watts: "{{ states(power_sensor) | float(0) }}"
+      reported_level: >-
+        {% set power = power_watts | float(0) %}
+        {% if power >= level_4_watts | float(0) %}4
+        {% elif power >= level_3_watts | float(0) %}3
+        {% elif power >= level_2_watts | float(0) %}2
+        {% elif power >= level_1_watts | float(0) %}1
+        {% else %}0
+        {% endif %}
+      current_level: "{{ states(tracked_level_entity) | int(0) }}"
+      downshift_delay: "00:00:{{ '%02d' | format(downshift_delay_seconds | int(30)) }}"
+  - condition: template
+    value_template: "{{ states(power_sensor) not in ['unknown', 'unavailable', 'none'] }}"
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: power_changed
+          - condition: template
+            value_template: "{{ reported_level | int > current_level | int }}"
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: "{{ downshift_timer }}"
+          - action: input_select.select_option
+            target:
+              entity_id: "{{ tracked_level_entity }}"
+            data:
+              option: "{{ reported_level }}"
+          - event: !input event_type
+            event_data:
+              entity_id: "{{ power_sensor }}"
+              power_w: "{{ power_watts | float(0) }}"
+              level: "{{ reported_level | int }}"
+              level_name: >-
+                {{ ['off', 'level_1', 'level_2', 'level_3', 'level_4']
+                   [reported_level | int] }}
+              direction: up
+      - conditions:
+          - condition: trigger
+            id: power_changed
+          - condition: template
+            value_template: "{{ reported_level | int == current_level | int }}"
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: "{{ downshift_timer }}"
+      - conditions:
+          - condition: trigger
+            id: power_changed
+          - condition: template
+            value_template: "{{ reported_level | int < current_level | int }}"
+          - condition: state
+            entity_id: !input downshift_timer
+            state: idle
+        sequence:
+          - action: timer.start
+            target:
+              entity_id: "{{ downshift_timer }}"
+            data:
+              duration: "{{ downshift_delay }}"
+      - conditions:
+          - condition: trigger
+            id: downshift_timer_finished
+          - condition: template
+            value_template: "{{ reported_level | int < current_level | int }}"
+        sequence:
+          - variables:
+              next_level: "{{ [current_level | int - 1, 0] | max }}"
+          - action: input_select.select_option
+            target:
+              entity_id: "{{ tracked_level_entity }}"
+            data:
+              option: "{{ next_level }}"
+          - event: !input event_type
+            event_data:
+              entity_id: "{{ power_sensor }}"
+              power_w: "{{ power_watts | float(0) }}"
+              level: "{{ next_level | int }}"
+              level_name: >-
+                {{ ['off', 'level_1', 'level_2', 'level_3', 'level_4']
+                   [next_level | int] }}
+              direction: down
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ reported_level | int < next_level | int }}"
+                sequence:
+                  - action: timer.start
+                    target:
+                      entity_id: "{{ downshift_timer }}"
+                    data:
+                      duration: "{{ downshift_delay }}"
