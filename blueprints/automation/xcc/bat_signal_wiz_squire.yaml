@@ -9,7 +9,8 @@ blueprint:
 
     A second trigger while active keeps the bat-signal effect selected and
     adds one configured signal period to the timer's remaining time. The
-    default period is one minute.
+    default period is one minute. Duplicate reports of the same event within
+    half a second are ignored.
 
     Create an input_boolean and a timer helper before importing this blueprint.
     Give the dynamic-scene ID a unique value for each blueprint instance.
@@ -97,6 +98,19 @@ action:
       remaining_seconds: >-
         {% set finishes_at = state_attr(signal_timer, 'finishes_at') %}
         {{ [as_timestamp(finishes_at, 0) - as_timestamp(now()), 0] | max | int }}
+  # Some event entities report one button press twice within milliseconds.
+  # Compare adjacent reports of the same event type while leaving non-state
+  # triggers, including timer.finished, unaffected.
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not defined
+         or trigger.from_state is none
+         or trigger.to_state is not defined
+         or trigger.to_state is none
+         or trigger.from_state.attributes.get('event_type')
+            != trigger.to_state.attributes.get('event_type')
+         or as_timestamp(trigger.to_state.state, 0)
+            - as_timestamp(trigger.from_state.state, 0) >= 0.5 }}
   - choose:
       - conditions:
           - condition: trigger
