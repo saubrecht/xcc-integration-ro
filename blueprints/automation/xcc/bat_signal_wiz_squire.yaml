@@ -135,6 +135,10 @@ action:
               - condition: template
                 value_template: "{{ bat_signal_effect | trim != '' }}"
             sequence:
+              # Ensure the light is on before selecting its effect.
+              - service: light.turn_on
+                target:
+                  entity_id: "{{ target_light }}"
               - service: light.turn_on
                 target:
                   entity_id: "{{ target_light }}"
