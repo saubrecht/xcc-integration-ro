@@ -2,8 +2,9 @@ blueprint:
   name: Deco confirmed Wi-Fi presence
   description: >-
     Maintain confirmed Wi-Fi presence for one Deco-tracked device and notify
-    only when that confirmed state changes. Brief Deco mesh roaming events do
-    not change the confirmed state, so they produce no false arrival alert.
+    only when that confirmed state changes. Separate arrival and departure
+    delays allow fast arrivals while filtering Deco mesh roaming gaps shorter
+    than the departure delay.
   domain: automation
   input:
     tracked_device:
@@ -29,9 +30,22 @@ blueprint:
       selector:
         text:
     confirmation_delay:
-      name: Confirmation delay
-      description: The Wi-Fi state must remain unchanged for this long.
-      default: 5
+      name: Departure confirmation delay
+      description: >-
+        The device must remain not_home for this long before confirming a
+        departure. Increase this delay if Deco reports long gaps during roaming.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: minutes
+          mode: slider
+    arrival_confirmation_delay:
+      name: Arrival confirmation delay
+      description: The device must remain home for this long before confirming an arrival.
+      default: 1
       selector:
         number:
           min: 1
@@ -64,7 +78,7 @@ trigger:
     entity_id: !input tracked_device
     to: home
     for:
-      minutes: !input confirmation_delay
+      minutes: !input arrival_confirmation_delay
     id: arrived
 
 condition:

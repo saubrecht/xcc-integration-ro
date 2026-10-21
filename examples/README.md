@@ -39,3 +39,23 @@ match the device's current presence before enabling the automation.
 The helper changes only after a confirmed arrival or departure. A short mesh
 handoff therefore leaves it unchanged, and the later return to `home` does not
 generate a false arrival notification.
+
+Arrival and departure have separate confirmation delays. By default, the device
+must remain `home` for one minute to confirm an arrival, or `not_home` for ten
+minutes to confirm a departure. Roaming gaps shorter than the departure delay
+produce neither a departure notification nor a subsequent arrival notification.
+Longer gaps can still be mistaken for a departure.
+
+When updating an existing automation, keep `confirmation_delay` as the departure
+delay input and add `arrival_confirmation_delay`. Existing explicit values for
+`confirmation_delay` remain in effect; updating the blueprint does not replace
+them with the new default. For a ten-minute departure delay and one-minute
+arrival delay, use these values under `use_blueprint.input`:
+
+```yaml
+confirmation_delay: 10
+arrival_confirmation_delay: 1
+```
+
+Update the installed blueprint and reload automations after saving the input
+changes. Reloading resets any pending confirmation interval.
