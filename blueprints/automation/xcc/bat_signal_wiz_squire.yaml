@@ -12,6 +12,10 @@ blueprint:
     default period is one minute. Duplicate reports of the same event within
     half a second are ignored.
 
+    Each accepted activation also sends a spoken notification to the selected
+    Android Companion App device, but only when its existing home Wi-Fi
+    input_boolean helper is on. Timer completion does not send a notification.
+
     Create an input_boolean and a timer helper before importing this blueprint.
     Give the dynamic-scene ID a unique value for each blueprint instance.
   domain: automation
@@ -74,6 +78,28 @@ blueprint:
       default: bat_signal_snapshot
       selector:
         text:
+    mobile_notification_service:
+      name: Mobile notification service
+      description: >-
+        Enter the chosen Android Companion App device's notification service,
+        for example notify.mobile_app_my_phone. TTS notifications require the
+        Android Companion App.
+      selector:
+        text: {}
+    mobile_home_wifi:
+      name: Mobile home Wi-Fi helper
+      description: >-
+        Select the existing input_boolean that is on when the chosen phone is
+        connected to home Wi-Fi. This blueprint only reads the helper.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    tts_message:
+      name: Spoken notification message
+      default: "Bat signal activated."
+      selector:
+        text: {}
 
 mode: queued
 max: 20
@@ -170,3 +196,15 @@ action:
             {% set seconds = (period_seconds | int)
                  + (remaining_seconds if is_state(signal_active, 'on') else 0) %}
             {{ '%02d:%02d:%02d' | format(seconds // 3600, (seconds % 3600) // 60, seconds % 60) }}
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: !input mobile_home_wifi
+                state: "on"
+            sequence:
+              - service: !input mobile_notification_service
+                continue_on_error: true
+                data:
+                  message: TTS
+                  data:
+                    tts_text: !input tts_message
