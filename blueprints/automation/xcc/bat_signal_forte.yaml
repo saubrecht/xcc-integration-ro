@@ -1,0 +1,258 @@
+blueprint:
+  name: Bat signal forte
+  description: >-
+    Activate a selected WiZ light from a RODRET dimmer (or any supported
+    device trigger), apply a chosen WiZ effect, and restore the exact original
+    light state when the signal finishes. The original state is held in a
+    dynamic scene snapshot, so this includes power state, brightness, colour,
+    colour temperature, and effect.
+
+    A second trigger while active keeps the bat-signal effect selected and
+    adds one configured signal period to the timer's remaining time. The
+    default period is one minute. Duplicate reports of the same event within
+    half a second are ignored.
+
+    Each accepted activation also sends a spoken notification to the selected
+    Android Companion App device, but only when its existing home Wi-Fi
+    input_boolean helper is on. Timer completion does not send a notification.
+
+    Each accepted activation also flashes a selected light ten times, with
+    0.75 seconds on and 0.75 seconds off per flash, then restores its state
+    from before the flashes. The flashing light may also be the WiZ light;
+    in that case the timed effect resumes after the flashes. Flashing takes
+    about 15 seconds and is included in the signal period.
+
+    Create an input_boolean and a timer helper before importing this blueprint.
+    Give the dynamic-scene ID a unique value for each blueprint instance.
+  domain: automation
+  homeassistant:
+    min_version: 2024.6.0
+  input:
+    activation_trigger:
+      name: RODRET activation trigger
+      description: >-
+        Choose the desired RODRET device trigger, for example its on-button
+        press. This generic trigger selector also supports ZHA, Zigbee2MQTT,
+        and other supported integrations.
+      selector:
+        trigger: {}
+    target_light:
+      name: WiZ Squire light
+      selector:
+        entity:
+          filter:
+            - domain: light
+    flash_light:
+      name: Light to flash
+      description: >-
+        Flash this light ten times on each activation, then restore its state.
+        You may select the same light as the WiZ Squire light.
+      selector:
+        entity:
+          filter:
+            - domain: light
+    bat_signal_effect:
+      name: WiZ effect / light mode
+      description: >-
+        Enter an effect name exactly as listed in the light's effect_list
+        attribute, for example Party, Fireplace, or Ocean. Leave blank to
+        turn the light on without changing its effect.
+      default: ""
+      selector:
+        text: {}
+    signal_period_minutes:
+      name: Signal period
+      description: Each activation adds this many minutes to the remaining timer.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    signal_timer:
+      name: Bat-signal timer helper
+      description: Timer helper that controls how long the effect remains active.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+    signal_active:
+      name: Bat-signal active helper
+      description: Input boolean helper used internally to retain the active state.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    snapshot_scene_id:
+      name: Snapshot scene ID
+      description: >-
+        A unique lower-case scene ID, without the "scene." prefix, for example
+        bat_signal_forte_squire. It is used internally to store the original state.
+      default: bat_signal_forte_snapshot
+      selector:
+        text:
+    mobile_notification_service:
+      name: Mobile notification service
+      description: >-
+        Enter the chosen Android Companion App device's notification service,
+        for example notify.mobile_app_my_phone. TTS notifications require the
+        Android Companion App.
+      selector:
+        text: {}
+    mobile_home_wifi:
+      name: Mobile home Wi-Fi helper
+      description: >-
+        Select the existing input_boolean that is on when the chosen phone is
+        connected to home Wi-Fi. This blueprint only reads the helper.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    tts_message:
+      name: Spoken notification message
+      default: "Bat signal activated."
+      selector:
+        text: {}
+
+mode: queued
+max: 20
+
+triggers:
+  - triggers: !input activation_trigger
+  - platform: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input signal_timer
+    id: timer_finished
+
+action:
+  - variables:
+      target_light: !input target_light
+      flash_light: !input flash_light
+      signal_timer: !input signal_timer
+      signal_active: !input signal_active
+      snapshot_scene_id: !input snapshot_scene_id
+      bat_signal_effect: !input bat_signal_effect
+      signal_period_minutes: !input signal_period_minutes
+      period_seconds: "{{ (signal_period_minutes | float(1) * 60) | int }}"
+      remaining_seconds: >-
+        {% set finishes_at = state_attr(signal_timer, 'finishes_at') %}
+        {{ [as_timestamp(finishes_at, 0) - as_timestamp(now()), 0] | max | int }}
+  # Some event entities report one button press twice within milliseconds.
+  # Compare adjacent reports of the same event type while leaving non-state
+  # triggers, including timer.finished, unaffected.
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not defined
+         or trigger.from_state is none
+         or trigger.to_state is not defined
+         or trigger.to_state is none
+         or trigger.from_state.attributes.get('event_type')
+            != trigger.to_state.attributes.get('event_type')
+         or as_timestamp(trigger.to_state.state, 0)
+            - as_timestamp(trigger.from_state.state, 0) >= 0.5 }}
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: timer_finished
+          - condition: state
+            entity_id: !input signal_active
+            state: "on"
+        sequence:
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ 'scene.' ~ snapshot_scene_id }}"
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ signal_active }}"
+      - conditions:
+          - condition: trigger
+            id: timer_finished
+        sequence: []
+    default:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: !input signal_active
+                state: "off"
+            sequence:
+              - service: scene.create
+                data:
+                  scene_id: "{{ snapshot_scene_id }}"
+                  snapshot_entities:
+                    - "{{ target_light }}"
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: "{{ signal_active }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ bat_signal_effect | trim != '' }}"
+            sequence:
+              # Ensure the light is on before selecting its effect.
+              - service: light.turn_on
+                target:
+                  entity_id: "{{ target_light }}"
+              - service: light.turn_on
+                target:
+                  entity_id: "{{ target_light }}"
+                data:
+                  effect: "{{ bat_signal_effect }}"
+        default:
+          - service: light.turn_on
+            target:
+              entity_id: "{{ target_light }}"
+      - service: timer.start
+        target:
+          entity_id: "{{ signal_timer }}"
+        data:
+          duration: >-
+            {% set seconds = (period_seconds | int)
+                 + (remaining_seconds if is_state(signal_active, 'on') else 0) %}
+            {{ '%02d:%02d:%02d' | format(seconds // 3600, (seconds % 3600) // 60, seconds % 60) }}
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: !input mobile_home_wifi
+                state: "on"
+            sequence:
+              - service: !input mobile_notification_service
+                continue_on_error: true
+                data:
+                  message: TTS
+                  data:
+                    tts_text: !input tts_message
+      # Snapshot after applying the timed effect so selecting the same light
+      # for both roles resumes that effect when flashing finishes.
+      - service: scene.create
+        data:
+          scene_id: "{{ snapshot_scene_id ~ '_flash' }}"
+          snapshot_entities:
+            - "{{ flash_light }}"
+      - service: light.turn_off
+        target:
+          entity_id: "{{ flash_light }}"
+        data:
+          transition: 0
+      - repeat:
+          count: 10
+          sequence:
+            - service: light.turn_on
+              target:
+                entity_id: "{{ flash_light }}"
+              data:
+                transition: 0
+            - delay:
+                milliseconds: 750
+            - service: light.turn_off
+              target:
+                entity_id: "{{ flash_light }}"
+              data:
+                transition: 0
+            - delay:
+                milliseconds: 750
+      - service: scene.turn_on
+        target:
+          entity_id: "{{ 'scene.' ~ snapshot_scene_id ~ '_flash' }}"
