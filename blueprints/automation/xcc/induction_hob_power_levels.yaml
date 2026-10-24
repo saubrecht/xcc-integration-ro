@@ -11,9 +11,16 @@ blueprint:
     steps down one level at a time, firing the events in reverse order; this
     lets a ventilation automation reduce its speed gradually.
 
-    Create a dedicated timer helper and an input_select helper before importing
+    The tracked level resets to 0 after the configurable reset delay (two hours
+    by default) since the last nonzero level activation. Each change to a
+    nonzero level restarts this countdown. A reset fires a level 0 event and
+    cancels any pending downshift. Later power changes can activate a level again.
+
+    Create two dedicated timer helpers and an input_select helper before importing
     this blueprint. Configure the input_select options exactly as: 0, 1, 2, 3,
-    4. Level 0 means off. Keep the four watt thresholds strictly increasing.
+    4. Level 0 is the default when no threshold is reached and has no threshold
+    of its own. Thresholds may be negative. Keep the four watt thresholds
+    strictly increasing.
   domain: automation
   homeassistant:
     min_version: 2024.10.0
@@ -40,13 +47,29 @@ blueprint:
         entity:
           filter:
             - domain: timer
+    reset_timer:
+      name: Level reset timer helper
+      description: Dedicated timer helper, different from the downshift timer.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+    reset_delay:
+      name: Level reset delay
+      description: Time since the last nonzero level activation before resetting to 0.
+      default:
+        hours: 2
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
     level_1_watts:
       name: Level 1 threshold
       description: Power at or above which level 1 is active.
       default: 300
       selector:
         number:
-          min: 1
+          min: -10000
           max: 10000
           step: 10
           unit_of_measurement: W
@@ -57,7 +80,7 @@ blueprint:
       default: 900
       selector:
         number:
-          min: 1
+          min: -10000
           max: 10000
           step: 10
           unit_of_measurement: W
@@ -68,7 +91,7 @@ blueprint:
       default: 1800
       selector:
         number:
-          min: 1
+          min: -10000
           max: 10000
           step: 10
           unit_of_measurement: W
@@ -79,7 +102,7 @@ blueprint:
       default: 2800
       selector:
         number:
-          min: 1
+          min: -10000
           max: 10000
           step: 10
           unit_of_measurement: W
@@ -117,12 +140,18 @@ triggers:
     event_data:
       entity_id: !input downshift_timer
     id: downshift_timer_finished
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input reset_timer
+    id: reset_timer_finished
 
 actions:
   - variables:
       power_sensor: !input power_sensor
       tracked_level_entity: !input tracked_level
       downshift_timer: !input downshift_timer
+      reset_timer: !input reset_timer
       level_1_watts: !input level_1_watts
       level_2_watts: !input level_2_watts
       level_3_watts: !input level_3_watts
@@ -140,8 +169,31 @@ actions:
       current_level: "{{ states(tracked_level_entity) | int(0) }}"
       downshift_delay: "00:00:{{ '%02d' | format(downshift_delay_seconds | int(30)) }}"
   - condition: template
-    value_template: "{{ states(power_sensor) not in ['unknown', 'unavailable', 'none'] }}"
+    value_template: >-
+      {{ trigger.id == 'reset_timer_finished' or
+         states(power_sensor) not in ['unknown', 'unavailable', 'none'] }}
   - choose:
+      - conditions:
+          - condition: trigger
+            id: reset_timer_finished
+          - condition: template
+            value_template: "{{ current_level | int > 0 }}"
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: "{{ downshift_timer }}"
+          - action: input_select.select_option
+            target:
+              entity_id: "{{ tracked_level_entity }}"
+            data:
+              option: "0"
+          - event: !input event_type
+            event_data:
+              entity_id: "{{ power_sensor }}"
+              power_w: "{{ power_watts | float(0) }}"
+              level: 0
+              level_name: "off"
+              direction: down
       - conditions:
           - condition: trigger
             id: power_changed
@@ -156,6 +208,11 @@ actions:
               entity_id: "{{ tracked_level_entity }}"
             data:
               option: "{{ reported_level }}"
+          - action: timer.start
+            target:
+              entity_id: "{{ reset_timer }}"
+            data:
+              duration: !input reset_delay
           - event: !input event_type
             event_data:
               entity_id: "{{ power_sensor }}"
@@ -201,6 +258,20 @@ actions:
               entity_id: "{{ tracked_level_entity }}"
             data:
               option: "{{ next_level }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ next_level | int > 0 }}"
+                sequence:
+                  - action: timer.start
+                    target:
+                      entity_id: "{{ reset_timer }}"
+                    data:
+                      duration: !input reset_delay
+            default:
+              - action: timer.cancel
+                target:
+                  entity_id: "{{ reset_timer }}"
           - event: !input event_type
             event_data:
               entity_id: "{{ power_sensor }}"
