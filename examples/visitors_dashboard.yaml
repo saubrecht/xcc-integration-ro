@@ -1,0 +1,8 @@
+# Add this as a manual card in your dashboard. Use your helper's actual entity ID.
+type: entities
+title: Visitors
+show_header_toggle: false
+entities:
+  - entity: input_boolean.visitors
+    name: Visitors mode
+    icon: mdi:account-group

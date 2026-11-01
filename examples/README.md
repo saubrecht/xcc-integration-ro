@@ -1,5 +1,39 @@
 # Home Assistant examples
 
+## Visitors mode
+
+The [Visitors blueprint](../blueprints/automation/xcc/visitors.yaml) uses a
+dashboard toggle to pause selected automations and apply selected scenes.
+It works independently of the XCC integration.
+
+1. Copy `blueprints/automation/xcc/visitors.yaml` into your Home Assistant
+   configuration directory at `blueprints/automation/xcc/visitors.yaml`.
+   Reload automations if needed to discover it.
+2. Open **Settings → Devices & services → Helpers → Create helper → Toggle**.
+   Name it **Visitors** and note its entity ID (usually `input_boolean.visitors`).
+3. Under **Settings → Automations & scenes → Blueprints**, create an automation
+   from **Visitors**. Select the helper, two or more automations to pause, and
+   two or more scenes to activate. Save and leave this automation enabled.
+   Do not include the Visitors automation in its own selection.
+4. Edit your dashboard, add a **Manual** card, and paste
+   [visitors_dashboard.yaml](visitors_dashboard.yaml). Replace the entity ID
+   if your helper has a different one. The card shows an on/off switch.
+
+**On:** stops running actions in the selected automations, disables them, then
+applies the scenes in the selected order. **Off:** enables all selected
+automations and leaves the current scene settings alone. Re-enabling does not
+itself trigger an automation, but future triggers can change those settings.
+Scenes apply settings once and do not have a persistent on/off state; the helper
+shows whether Visitors mode is enabled. For overlapping scenes, the last applied
+scene wins for shared entities.
+
+The helper restores its previous value after a restart, and the blueprint
+reapplies that mode at Home Assistant startup. Turning Visitors off enables every
+selected automation, even ones that were disabled before Visitors was turned on.
+Use the helper switch for normal operation; the automation's own enable switch
+controls whether the blueprint runs at all. Manual **Run actions** applies the
+helper's current mode without toggling it.
+
 ## Deco household Wi-Fi notifications
 
 `deco_household_wifi_notifications.yaml` is an automation blueprint for

@@ -1,0 +1,97 @@
+blueprint:
+  name: Visitors
+  description: >-
+    Use a Toggle helper as a Visitors mode switch on your dashboard.
+    When on, disable the selected automations (including their running actions),
+    then activate the selected scenes. When off, re-enable all selected
+    automations without changing the scene settings.
+
+    Select two or more automations and two or more scenes as needed.
+    Scenes apply settings once; they are not held active. Re-enabled automations
+    can change those settings when they next run. If scenes overlap, the last
+    selected scene applied wins for the shared entities.
+
+    Create an Input boolean (Toggle) helper before using this blueprint.
+    Keep this Visitors automation enabled and do not select it in the list of
+    automations to disable. All selected automations are enabled when Visitors
+    is off, including any that were already disabled before Visitors was on.
+    Home Assistant startup also applies the current helper state.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    visitors_toggle:
+      name: Visitors toggle helper
+      description: Add this helper to your dashboard to control and see Visitors mode.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    controlled_automations:
+      name: Automations to disable while visitors are here
+      description: Select two or more as needed. Do not select this Visitors automation.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: automation
+    visitors_scenes:
+      name: Scenes to activate
+      description: >-
+        Select two or more as needed. Scenes are applied in the selected order
+        when Visitors turns on; turning Visitors off leaves their settings alone.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: scene
+
+# Serialize changes and read the current helper state so rapid toggles finish
+# with the requested state, without cancelling partially completed actions.
+mode: queued
+max: 10
+
+variables:
+  visitors_toggle: !input visitors_toggle
+  controlled_automations: !input controlled_automations
+  visitors_scenes: !input visitors_scenes
+
+triggers:
+  - trigger: state
+    entity_id: !input visitors_toggle
+    to: "on"
+  - trigger: state
+    entity_id: !input visitors_toggle
+    to: "off"
+  - trigger: homeassistant
+    event: start
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ this.entity_id not in controlled_automations
+         and controlled_automations | count > 0
+         and visitors_scenes | count > 0 }}
+
+actions:
+  - choose:
+      - conditions: "{{ is_state(visitors_toggle, 'on') }}"
+        sequence:
+          - action: automation.turn_off
+            target:
+              entity_id: !input controlled_automations
+            data:
+              stop_actions: true
+          - repeat:
+              for_each: !input visitors_scenes
+              sequence:
+                - condition: template
+                  value_template: "{{ is_state(visitors_toggle, 'on') }}"
+                - action: scene.turn_on
+                  target:
+                    entity_id: "{{ repeat.item }}"
+      - conditions: "{{ is_state(visitors_toggle, 'off') }}"
+        sequence:
+          - action: automation.turn_on
+            target:
+              entity_id: !input controlled_automations
