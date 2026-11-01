@@ -5,23 +5,26 @@ blueprint:
     power-level blueprint. Select four scripts: a lights toggle, a motor
     toggle, a motor power increase, and a motor power decrease.
 
-    Level 0 has lights and motor off. Level 1 has lights on and motor off.
-    Levels 2, 3, and 4 have lights on and the motor at low, medium, and high
-    power respectively. The motor toggle must start the motor at low power.
-    Start with the hob helper at 0 and both lights and motor off; external
-    toggles can put the devices out of sync with this automation.
+    Level 0 has lights and motor off. Levels 1 and 2 have lights on and
+    the motor at low power. Levels 3 and 4 use medium and high motor power.
+    The motor toggle must start the motor at low power.
 
-    Upward transitions run immediately when processed. Each downward motor
-    step waits for the configurable power decrease delay (15 seconds by
-    default); crossing below level 2 toggles the motor off. Reaching level 0
-    also toggles the lights off after the separate lights-off delay
-    (30 seconds by default), counted independently of motor steps.
+    Create a dedicated input_select with options 0, 1, 2, 3 for the last
+    commanded motor speed (off, low, medium, high), and an input_boolean
+    for the last commanded lights state. These must be separate from the
+    hob tracked-level helper. Initialize them to 0 and off with both devices
+    off. External toggles can put the devices out of sync with these helpers.
 
-    Jumps across levels run every intermediate step, including a direct
-    reset to 0. Transitions are queued and completed in order so toggle
-    commands stay paired. Changes received during a delay wait in the queue;
-    they do not cancel a pending command. Script calls wait for completion.
-    Unknown, unavailable, and attribute-only changes are ignored.
+    Every hob level change cancels pending delays and recalculates commands
+    from the saved motor and lights states. Increases take effect immediately.
+    If a decrease is still needed after an increase, its full delay starts
+    again. Each motor reduction or motor-off command waits 15 seconds by
+    default. Lights turn off after a separate delay of 30 seconds at level 0.
+    Both delays are configurable and run independently.
+
+    Jumps across levels run every required motor step, including a direct
+    reset to 0. Returning from 0 before the lights-off delay expires keeps
+    the lights on. Unknown, unavailable, and attribute-only changes are ignored.
   domain: automation
   homeassistant:
     min_version: 2024.10.0
@@ -33,6 +36,20 @@ blueprint:
         entity:
           filter:
             - domain: input_select
+    motor_level:
+      name: Commanded motor speed helper
+      description: Dedicated input_select with options 0, 1, 2, 3; initialize to 0.
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+    lights_active:
+      name: Commanded lights state helper
+      description: Dedicated input_boolean; initialize to off with the lights off.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
     lights_toggle_script:
       name: Lights on/off script
       description: Script that toggles the ventilator lights on or off.
@@ -83,8 +100,7 @@ blueprint:
           unit_of_measurement: s
           mode: box
 
-mode: queued
-max: 100
+mode: restart
 
 triggers:
   - trigger: state
@@ -101,51 +117,87 @@ conditions:
 
 actions:
   - variables:
-      previous_level: "{{ trigger.from_state.state | int }}"
+      motor_level_entity: !input motor_level
+      lights_active_entity: !input lights_active
+      hob_level_entity: !input tracked_level
       new_level: "{{ trigger.to_state.state | int }}"
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ new_level > previous_level }}"
-        sequence:
+      target_motor_level: "{{ [new_level - 1, 1] | max if new_level > 0 else 0 }}"
+  - parallel:
+      - sequence:
           - repeat:
-              count: "{{ new_level - previous_level }}"
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(hob_level_entity) in ['0', '1', '2', '3', '4']
+                       and states(motor_level_entity) in ['0', '1', '2', '3']
+                       and states(motor_level_entity) | int != target_motor_level }}
               sequence:
+                - variables:
+                    current_motor_level: "{{ states(motor_level_entity) | int }}"
                 - choose:
                     - conditions:
                         - condition: template
-                          value_template: "{{ previous_level + repeat.index == 1 }}"
+                          value_template: "{{ current_motor_level < target_motor_level }}"
                       sequence:
-                        - action: !input lights_toggle_script
-                    - conditions:
-                        - condition: template
-                          value_template: "{{ previous_level + repeat.index == 2 }}"
-                      sequence:
-                        - action: !input motor_toggle_script
-                  default:
-                    - action: !input increase_power_script
-      - conditions:
-          - condition: template
-            value_template: "{{ new_level < previous_level }}"
-        sequence:
-          - parallel:
-              - sequence:
-                  - repeat:
-                      count: "{{ [previous_level - ([new_level, 1] | max), 0] | max }}"
-                      sequence:
-                        - delay:
-                            seconds: !input power_decrease_delay_seconds
                         - choose:
                             - conditions:
                                 - condition: template
-                                  value_template: "{{ previous_level - repeat.index >= 2 }}"
+                                  value_template: "{{ current_motor_level == 0 }}"
                               sequence:
-                                - action: !input decrease_power_script
+                                - action: !input motor_toggle_script
                           default:
-                            - action: !input motor_toggle_script
-              - sequence:
+                            - action: !input increase_power_script
+                        - action: input_select.select_option
+                          target:
+                            entity_id: "{{ motor_level_entity }}"
+                          data:
+                            option: "{{ current_motor_level + 1 }}"
+                  default:
+                    - delay:
+                        seconds: !input power_decrease_delay_seconds
+                    - condition: template
+                      value_template: >-
+                        {{ states(hob_level_entity) in ['0', '1', '2', '3', '4']
+                           and states(hob_level_entity) | int == new_level }}
+                    - choose:
+                        - conditions:
+                            - condition: template
+                              value_template: "{{ current_motor_level > 1 }}"
+                          sequence:
+                            - action: !input decrease_power_script
+                      default:
+                        - action: !input motor_toggle_script
+                    - action: input_select.select_option
+                      target:
+                        entity_id: "{{ motor_level_entity }}"
+                      data:
+                        option: "{{ current_motor_level - 1 }}"
+      - sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ new_level > 0 }}"
+                  - condition: state
+                    entity_id: !input lights_active
+                    state: "off"
+                sequence:
+                  - action: !input lights_toggle_script
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ lights_active_entity }}"
+              - conditions:
                   - condition: template
                     value_template: "{{ new_level == 0 }}"
+                  - condition: state
+                    entity_id: !input lights_active
+                    state: "on"
+                sequence:
                   - delay:
                       seconds: !input lights_off_delay_seconds
+                  - condition: state
+                    entity_id: !input tracked_level
+                    state: "0"
                   - action: !input lights_toggle_script
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ lights_active_entity }}"
