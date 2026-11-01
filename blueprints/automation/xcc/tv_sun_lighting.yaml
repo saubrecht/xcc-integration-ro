@@ -1,0 +1,199 @@
+blueprint:
+  name: TV — keep lights on below sun elevation
+  description: >-
+    Disable a motion-light automation while the TV is on, stopping its pending
+    light-off actions. Activate a scene immediately if the sun is at or below
+    the configured elevation; otherwise wait for the sun to reach it.
+    A dedicated timer retries the check, and a sun threshold trigger reacts
+    as soon as Home Assistant reports the crossing. No sunset time is estimated.
+
+    When the TV turns off, cancel the timer and re-enable motion lighting.
+    The current lighting is left unchanged until motion lighting acts again.
+    Re-enabling an automation does not itself trigger it. The scene is activated
+    once, not toggled or repeatedly applied throughout the viewing session.
+
+    Use the same elevation as Sensor Light's Sun Elevation Falling setting
+    (default -1.5 degrees). This is an angle, not an offset in minutes.
+    Once applied, the scene stays in effect even if the sun rises again.
+
+    Create a dedicated Timer helper for this automation. Do not select this
+    automation as the motion automation. TV on/off state lists must not overlap.
+    Unknown/unavailable TV states cancel waiting but do not restore motion
+    lighting; a known TV state resumes control. Home Assistant startup also
+    reconciles the current TV state. TV off always enables motion lighting,
+    even if that automation was disabled before the TV was turned on.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    tv_entity:
+      name: TV power entity
+      description: Select an entity whose state reliably indicates TV power.
+      selector:
+        entity: {}
+    tv_on_states:
+      name: TV on states
+      default: ["on", "playing", "paused", "idle", "buffering"]
+      selector:
+        select:
+          multiple: true
+          custom_value: true
+          options: ["on", "playing", "paused", "idle", "buffering"]
+    tv_off_states:
+      name: TV off states
+      default: ["off", "standby"]
+      selector:
+        select:
+          multiple: true
+          custom_value: true
+          options: ["off", "standby"]
+    motion_automation:
+      name: Motion-light automation to disable
+      description: Select your Sensor Light automation, not this TV automation.
+      selector:
+        entity:
+          filter:
+            - domain: automation
+    tv_scene:
+      name: Living-room TV scene
+      description: Scene that turns on the lights you want while watching TV.
+      selector:
+        entity:
+          filter:
+            - domain: scene
+    sun_entity:
+      name: Sun entity
+      default: sun.sun
+      selector:
+        entity:
+          filter:
+            - domain: sun
+    sun_elevation:
+      name: Sun elevation
+      description: >-
+        Activate at or below this angle. Match Sensor Light's Sun Elevation
+        Falling setting. Negative values are below the horizon.
+      default: -1.5
+      selector:
+        number:
+          min: -10
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°"
+    wait_timer:
+      name: Dedicated sun-wait timer
+      description: Create a Timer helper used only by this automation.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+    check_seconds:
+      name: Sun check retry interval
+      description: >-
+        Timer interval while waiting, including when sun data is unavailable.
+        The sun threshold trigger can activate the scene before this expires.
+      default: 60
+      selector:
+        number:
+          min: 10
+          max: 3600
+          step: 1
+          unit_of_measurement: s
+          mode: box
+
+# Runs contain no delays. Serialize service calls, using the current TV state
+# in each run so queued sun/timer events cannot apply a scene after TV off.
+mode: queued
+max: 20
+
+variables:
+  tv_entity: !input tv_entity
+  on_states: !input tv_on_states
+  off_states: !input tv_off_states
+  motion_automation: !input motion_automation
+  sun_entity: !input sun_entity
+  sun_elevation: !input sun_elevation
+  wait_timer: !input wait_timer
+  check_seconds: !input check_seconds
+
+triggers:
+  - trigger: state
+    entity_id: !input tv_entity
+    to: null
+    id: tv_changed
+  - trigger: numeric_state
+    entity_id: !input sun_entity
+    attribute: elevation
+    below: !input sun_elevation
+    id: sun_low
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input wait_timer
+    id: timer_finished
+  - trigger: homeassistant
+    event: start
+    id: startup
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ motion_automation != this.entity_id
+         and on_states | count > 0 and off_states | count > 0
+         and on_states | select('in', off_states) | list | count == 0 }}
+
+actions:
+  # Ignore playback changes within the on group. Process unknown states too,
+  # so losing the TV connection cancels any pending scene activation.
+  - condition: template
+    value_template: >-
+      {% if trigger.id == 'tv_changed' %}
+        {% set new = trigger.to_state.state if trigger.to_state is not none else '' %}
+        {% set old = trigger.from_state.state if trigger.from_state is not none else '' %}
+        {{ not ((new in on_states and old in on_states)
+                or (new in off_states and old in off_states)) }}
+      {% elif trigger.id == 'sun_low' %}
+        {{ is_state(wait_timer, 'active') }}
+      {% else %}
+        true
+      {% endif %}
+  - choose:
+      - conditions: "{{ states(tv_entity) in on_states }}"
+        sequence:
+          - action: automation.turn_off
+            target:
+              entity_id: !input motion_automation
+            data:
+              stop_actions: true
+          - choose:
+              - conditions: >-
+                  {% set elevation = state_attr(sun_entity, 'elevation') %}
+                  {{ is_number(elevation)
+                     and elevation | float <= sun_elevation | float }}
+                sequence:
+                  - action: timer.cancel
+                    target:
+                      entity_id: !input wait_timer
+                  - condition: template
+                    value_template: "{{ states(tv_entity) in on_states }}"
+                  - action: scene.turn_on
+                    target:
+                      entity_id: !input tv_scene
+            default:
+              - action: timer.start
+                target:
+                  entity_id: !input wait_timer
+                data:
+                  duration: "{{ check_seconds | int }}"
+      - conditions: "{{ states(tv_entity) in off_states }}"
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: !input wait_timer
+          - action: automation.turn_on
+            target:
+              entity_id: !input motion_automation
+    default:
+      - action: timer.cancel
+        target:
+          entity_id: !input wait_timer
