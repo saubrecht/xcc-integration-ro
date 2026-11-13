@@ -30,7 +30,7 @@ PLATFORMS_TO_SETUP = [
 
 # Existing installations may still have platforms from a prior writable
 # version loaded. Include those on unload so the first reload after upgrade
-# removes them, while new setups only ever forward the sensor platform.
+# removes them, while new setups only forward sensor and binary-sensor platforms.
 PLATFORMS_TO_UNLOAD = [
     *PLATFORMS_TO_SETUP,
     Platform.SWITCH,

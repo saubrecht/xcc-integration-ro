@@ -1,6 +1,6 @@
 # XCC Heat Pump Controller Integration for Home Assistant
 
-This read-only integration monitors XCC heat pump controllers through Home Assistant. It automatically discovers available values from your XCC controller and exposes them as sensor and binary-sensor entities.
+This read-only integration monitors XCC heat pump controllers through Home Assistant. It automatically discovers available values from your XCC controller and exposes them as sensor and binary-sensor entities. Controller settings are also monitored: numeric settings and choices appear as sensors, and on/off settings appear as binary sensors. No entity can change a controller value, and the integration client contains no value-writing API.
 
 ## Features
 

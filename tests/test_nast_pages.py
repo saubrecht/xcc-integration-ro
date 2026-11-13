@@ -115,7 +115,7 @@ def test_nast2_data_sample_carries_omezeni_value():
 
 def test_full_pipeline_populates_omezeni_on_nast_device():
     """End to end: descriptor + NAST1/2/3.XML -> OMEZENIVYKONUGLOBALNI is a
-    number carrying its real value, assigned to the NAST device.
+    sensor carrying its real value, assigned to the NAST device.
 
     This is the regression for the original bug: fetching only NAST.XML (the
     descriptor echo) produced no value, and even with the data pages fetched,
@@ -128,17 +128,17 @@ def test_full_pipeline_populates_omezeni_on_nast_device():
 
     processed, _meta = process_entities(raw_entities, configs, language="english")
 
-    numbers = processed["numbers"]
+    sensors = processed["sensors"]
     omezeni = next(
-        (d for d in numbers.values() if d.get("prop") == "OMEZENIVYKONUGLOBALNI"), None
+        (d for d in sensors.values() if d.get("prop") == "OMEZENIVYKONUGLOBALNI"), None
     )
-    assert omezeni is not None, "OMEZENIVYKONUGLOBALNI not produced as a number"
+    assert omezeni is not None, "OMEZENIVYKONUGLOBALNI not produced as a sensor"
     assert omezeni["device"] == "NAST", f"expected NAST device, got {omezeni['device']!r}"
     assert float(omezeni["state"]) == 10.0, f"expected value 10, got {omezeni['state']!r}"
 
     # A NAST3-block prop must also survive (guards the NAST3 -> NAST routing).
-    devices = {d["device"] for d in numbers.values() if d.get("device") == "NAST"}
+    devices = {d["device"] for d in sensors.values() if d.get("device") == "NAST"}
     assert devices == {"NAST"}
-    assert sum(1 for d in numbers.values() if d.get("device") == "NAST") > 40, (
-        "far fewer NAST numbers survived than expected -- a data page is being dropped"
+    assert sum(1 for d in sensors.values() if d.get("device") == "NAST") > 40, (
+        "far fewer NAST sensors survived than expected -- a data page is being dropped"
     )

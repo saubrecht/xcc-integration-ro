@@ -336,7 +336,15 @@ def process_entities(
                 if parsed_type and parsed_type != "sensor":
                     entity_type = parsed_type
 
-            descriptor_config = entity_configs.get(prop, {})
+            # Controller capabilities describe the source, not HA controls.
+            # Expose every fetched value using read-only HA platforms.
+            entity_type = {
+                "switch": "binary_sensor",
+                "number": "sensor",
+                "select": "sensor",
+                "button": "sensor",
+            }.get(entity_type, entity_type)
+            descriptor_config = dict(config or {})
             if (
                 entity["attributes"].get("page", "").upper().startswith("NAST")
                 and not descriptor_config

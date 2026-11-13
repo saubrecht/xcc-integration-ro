@@ -19,17 +19,22 @@ def test_only_sensor_platform_is_forwarded():
         assert f"Platform.{platform}" not in platforms
 
 
-def test_coordinator_write_methods_do_not_call_the_client():
-    """Stale entities cannot bypass the sensor-only platform restriction."""
-    source = (REPO / "custom_components" / "xcc" / "coordinator.py").read_text(
-        encoding="utf-8"
-    )
-    write_methods = source.split("async def async_set_value", 1)[1].split(
-        "async def async_shutdown", 1
-    )[0]
+def test_integration_has_no_write_entry_points():
+    """Neither controls, entities, coordinator nor client can write values."""
+    import ast
 
-    assert "client.set_value" not in write_methods
-    assert "return False" in write_methods
+    forbidden = {
+        "set_value", "async_set_value", "async_set_entity_value",
+        "async_set_xcc_value", "async_set_native_value", "async_select_option",
+        "async_turn_on", "async_turn_off", "async_press",
+    }
+    for path in (REPO / "custom_components" / "xcc").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        methods = {
+            node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        assert not methods & forbidden, path.name
 
 
 def test_coordinator_holds_its_lock_for_the_complete_poll():
@@ -46,7 +51,7 @@ def test_coordinator_holds_its_lock_for_the_complete_poll():
 
 
 def test_hidden_switch_analysis_is_not_consumed_by_the_integration():
-    """Hidden writable fields belong exclusively to the offline analysis tool."""
+    """Offline switch analysis must not introduce writable HA control overrides."""
     const_source = (REPO / "custom_components" / "xcc" / "const.py").read_text(
         encoding="utf-8"
     )

@@ -529,15 +529,6 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
             if entity_data["type"] == entity_type
         }
 
-    async def async_set_value(self, entity_id: str, value: Any) -> bool:
-        """Reject writes; the Home Assistant integration is read-only."""
-        _LOGGER.warning("Ignoring write request for read-only XCC integration: %s", entity_id)
-        return False
-
-    async def async_set_entity_value(self, entity_id: str, value: Any) -> bool:
-        """Reject writes from any stale legacy entity."""
-        return await self.async_set_value(entity_id, value)
-
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator and clean up resources."""
         if self._client is not None:
@@ -750,13 +741,6 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
     def _normalize_property_name(self, prop: str) -> str:
         """Normalize property names for matching."""
         return normalize_property_name(prop)
-
-    def is_writable(self, prop: str) -> bool:
-        """Check if a property is writable with smart matching."""
-        if not self.entity_configs:
-            return False
-        config = lookup_with_normalized_fallback(prop, self.entity_configs)
-        return bool(config and config.get("writable", False))
 
     def get_entity_config(self, prop: str) -> dict:
         """Get the full entity configuration for a property with smart matching."""

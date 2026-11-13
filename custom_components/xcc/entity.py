@@ -299,17 +299,8 @@ class XCCEntity(CoordinatorEntity[XCCDataUpdateCoordinator]):
             "xcc_element_type": self._attributes.get("element_type", "unknown"),
         }
 
-        # Add settable information from descriptor config
-        descriptor_config = self._entity_data.get("descriptor_config", {}) if self._entity_data else {}
-        if descriptor_config:
-            attrs["xcc_settable"] = descriptor_config.get("writable", False)
-        else:
-            # For entities without descriptors, check if they're settable from raw attributes
-            attrs["xcc_settable"] = self._attributes.get("is_settable", False)
-
-        # Add settable indicator
-        if "is_settable" in self._attributes:
-            attrs["xcc_settable"] = self._attributes["is_settable"]
+        # Every entity is read-only in HA, even if the controller allows edits.
+        attrs["xcc_settable"] = False
 
         # Add constraints for numeric fields
         if self._attributes.get("data_type") == "numeric":
@@ -490,13 +481,13 @@ class XCCEntity(CoordinatorEntity[XCCDataUpdateCoordinator]):
         data_type = self._attributes.get("data_type", "unknown")
 
         # Convert boolean values
-        if data_type == "boolean":
+        if data_type in ("boolean", "bool"):
             if isinstance(value, str):
                 return value.lower() in ("1", "true", "on", "yes")
             return bool(value)
 
         # Convert numeric values
-        if data_type == "numeric":
+        if data_type in ("numeric", "real", "int", "integer", "float"):
             try:
                 # Try integer first
                 if isinstance(value, str) and "." not in value:
@@ -519,15 +510,6 @@ class XCCEntity(CoordinatorEntity[XCCDataUpdateCoordinator]):
     def _get_state_class(self) -> str | None:
         """Get state class for the entity."""
         return self._attributes.get("state_class")
-
-    async def async_set_xcc_value(self, value: Any) -> bool:
-        """Set value on XCC controller."""
-        success = await self.coordinator.async_set_value(self.entity_id_suffix, value)
-        if success:
-            # Request immediate update
-            await self.coordinator.async_request_refresh()
-        return success
-
 
 
 @callback

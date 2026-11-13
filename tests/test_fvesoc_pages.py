@@ -91,7 +91,7 @@ def test_fvesoc_page_routes_to_fve_device(page):
     assert device in _DEVICE_PRIORITY
 
 
-def test_soc_numbers_survive_process_entities_on_fve_device():
+def test_soc_settings_survive_as_sensors_on_fve_device():
     configs = _parse_descriptor()
     raw_entities = [
         {
@@ -110,18 +110,18 @@ def test_soc_numbers_survive_process_entities_on_fve_device():
 
     processed, _meta = process_entities(raw_entities, configs, language="english")
 
-    numbers = {
+    sensors = {
         data["prop"]: data["device"]
-        for data in processed["numbers"].values()
+        for data in processed["sensors"].values()
         if data["prop"] in _SOC_PROPS
     }
-    assert set(numbers) == set(_SOC_PROPS), (
-        f"missing SOC numbers: {set(_SOC_PROPS) - set(numbers)}"
+    assert set(sensors) == set(_SOC_PROPS), (
+        f"missing SOC sensors: {set(_SOC_PROPS) - set(sensors)}"
     )
-    assert set(numbers.values()) == {"FVE"}, f"unexpected devices: {numbers}"
+    assert set(sensors.values()) == {"FVE"}, f"unexpected devices: {sensors}"
 
     # None leaked into another bucket.
-    for bucket in ("sensors", "switches", "binary_sensors", "selects", "buttons"):
+    for bucket in ("numbers", "switches", "binary_sensors", "selects", "buttons"):
         leaked = {
             d["prop"] for d in processed[bucket].values()
             if d.get("prop", "") in _SOC_PROPS

@@ -965,90 +965,6 @@ class XCCClient:
 
 
 
-    async def set_value(self, prop: str, value: str, internal_name: str | None = None) -> bool:
-        """Set a value on the XCC controller using the same approach as TUVMINIMALNI and other working entities.
-
-        Args:
-            prop: Property name (e.g., "TUVMINIMALNI", "SYSCONFIG-PAGE1-VISIBLE")
-            value: Value to set (e.g., "45", "1")
-            internal_name: Optional pre-resolved internal NAME (e.g., "__R44907.0_BOOL_i").
-                           If provided, skips the page fetch + NAME lookup.
-        """
-        import logging
-
-        _LOGGER = logging.getLogger(__name__)
-
-        try:
-            _LOGGER.info("🔧 Setting XCC property %s to value %s", prop, value)
-
-            # Determine which page this property is on based on common patterns
-            prop_upper = prop.upper()
-            page_to_fetch = None
-
-            # Circuit-namespaced props (OKRUH<n>-*) resolve to that circuit's
-            # own data page; the page itself carries the prop under its bare
-            # TO-* name, so unqualify before the NAME lookup below.
-            lookup_prop, prop_circuit = unqualify_circuit_prop(prop)
-            if prop_circuit is not None:
-                page_to_fetch = okruh_data_page(prop_circuit)
-                prop_upper = lookup_prop.upper()
-
-            tuv_keywords = ["TUV", "DHW", "ZASOBNIK", "TEPLOTA", "TALT"]
-            if page_to_fetch is not None:
-                pass
-            elif prop_upper.startswith("SYSCONFIG-"):
-                page_to_fetch = "main.xml"
-            elif any(tuv_word in prop_upper for tuv_word in tuv_keywords):
-                page_to_fetch = "TUV11.XML"
-            elif "SOCCURVE" in prop_upper:
-                # Only the SOCCURVE0..11 monthly setpoints live on FVESOC1.XML.
-                # Other FVE-SOCCONFIG-* props (SOCMODE, MANUALSOC) are inputs on
-                # FVE4.XML, so they must fall through to the generic FVE branch.
-                page_to_fetch = "FVESOC1.XML"
-            elif prop_upper.startswith("FVE-CONFIG-") or prop_upper.startswith("FVESTATS-"):
-                page_to_fetch = "FVEINV10.XML"
-            elif any(fve_word in prop_upper for fve_word in ["FVE", "SOLAR", "PV"]):
-                page_to_fetch = "FVE4.XML"
-            elif any(okruh_word in prop_upper for okruh_word in ["OKRUH", "CIRCUIT", "TO-"]):
-                page_to_fetch = "OKRUH10.XML"
-            elif any(biv_word in prop_upper for biv_word in ["BIV", "BIVALENCE"]):
-                page_to_fetch = "BIV1.XML"
-            else:
-                page_to_fetch = "STAVJED1.XML"
-
-            _LOGGER.info("🎯 Using page %s for property %s", page_to_fetch, prop)
-
-            # If internal_name not provided, fetch page and look it up
-            if not internal_name:
-                page_content = await self.fetch_page(page_to_fetch)
-                name_mapping = self._extract_name_mapping_from_xml(page_content)
-                internal_name = name_mapping.get(lookup_prop)
-
-            if not internal_name:
-                _LOGGER.error("❌ Could not find internal NAME for property %s in %s", prop, page_to_fetch)
-                return False
-
-            # Use the same simple approach as TUVMINIMALNI and other working entities
-            # POST the internal NAME to the data page with form-encoded data
-            url = f"http://{self.ip}/{page_to_fetch}"
-            data = {internal_name: value}
-
-            _LOGGER.info("🔄 Setting %s=%s via POST to %s", internal_name, value, page_to_fetch)
-
-            async with self.session.post(url, data=data) as resp:
-                _LOGGER.info("📡 POST response: status=%d", resp.status)
-
-                if resp.status == 200:
-                    _LOGGER.info("✅ Successfully set XCC property %s to %s", prop, value)
-                    return True
-                else:
-                    _LOGGER.error("❌ POST failed with status %d", resp.status)
-                    return False
-
-        except Exception as err:
-            _LOGGER.error("❌ Error setting XCC property %s to %s: %s", prop, value, err)
-            return False
-
     async def close(self):
         """Close the session."""
         if self.session:
@@ -1144,7 +1060,7 @@ def parse_xml_entities(
             #        _USINT_u (unsigned small int), _UDINT_u (unsigned double int),
             #        _STRING[N]_s (string), _DT_ (datetime)
             name_attr = elem.get("NAME", "")
-            attributes["internal_name"] = name_attr  # Store for set_value lookups
+            attributes["internal_name"] = name_attr  # Preserve the source register for diagnostics
 
             if "_REAL_" in name_attr:
                 attributes["data_type"] = "numeric"

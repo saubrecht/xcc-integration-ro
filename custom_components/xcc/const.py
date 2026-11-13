@@ -363,8 +363,8 @@ HIDDEN_BINARY_SENSORS: dict = {
 # config inferred from descriptor XML or from the _BOOL_i register suffix:
 #   * STATUS_XML_DESCRIPTOR  — metadata for STATUS.XML (no paired descriptor file)
 #   * HIDDEN_BINARY_SENSORS  — pins read-only _BOOL_i status fields as binary_sensor
-# Hidden writable settings are intentionally excluded. Use
-# ``find_hidden_switches.py`` as the offline analysis tool for them instead.
+# Hidden settings need no control overrides: fetched values are exposed read-only.
+# Use ``find_hidden_switches.py`` to analyze their controller capabilities offline.
 DESCRIPTOR_OVERRIDES: dict = {
     **STATUS_XML_DESCRIPTOR,
     **HIDDEN_BINARY_SENSORS,

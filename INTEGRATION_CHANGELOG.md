@@ -2,6 +2,13 @@
 
 All notable changes to the XCC Heat Pump Controller Home Assistant integration.
 
+## Unreleased
+
+- Expose fetched controller settings as read-only sensors (numbers, choices and action values) or binary sensors (on/off settings), including secondary heating-circuit setpoints.
+- Preserve descriptor metadata for secondary circuits and include read-only choice values.
+- Remove controller value writes, entity/coordinator write entry points and the obsolete write resolver. Former control platforms remain as empty compatibility placeholders for unloading.
+- Replace obsolete write tests with regressions for settings visibility and the read-only boundary.
+
 ## [1.15.17] - 2026-08-03
 
 ### ✨ New Features

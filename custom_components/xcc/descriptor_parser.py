@@ -319,12 +319,6 @@ class XCCDescriptorParser:
         if not self.ignore_visibility and not self._is_element_visible(element):
             return None  # Skip elements that don't meet visibility conditions
 
-        # Check if element is readonly - only skip readonly choice elements
-        # All other elements (number, switch, time) should be processed and handled appropriately
-        config_attr = element.get("config", "")
-        if "readonly" in config_attr and element.tag in ["choice"]:
-            return None  # Skip readonly choice elements (but allow readonly numbers, switches, and time elements)
-
         # Get friendly names
         text = element.get("text", "")
         text_en = element.get("text_en", "")  # Don't default to text here
@@ -403,6 +397,7 @@ class XCCDescriptorParser:
 
         # Determine entity type and configuration
         # Check if element is writable (not readonly)
+        config_attr = element.get("config", "")
         is_writable = "readonly" not in config_attr
 
         entity_config = {
