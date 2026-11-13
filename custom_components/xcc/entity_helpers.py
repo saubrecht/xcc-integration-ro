@@ -421,6 +421,28 @@ def process_entities(
 # binary_sensor + a Repairs issue can alert once the gap persists.
 # ---------------------------------------------------------------------------
 
+def select_data_pages(
+    pages: list[str],
+    loaded_pages: set[str],
+    entities: dict[str, dict[str, Any]],
+    disabled_entities: set[tuple[str, str]],
+    ip_address: str,
+) -> list[str]:
+    """Poll owners of enabled entities and pages not yet successfully loaded.
+
+    Match registry identities by domain and unique_id, so user renames and
+    hidden entities do not affect polling. Missing registry entries remain
+    enabled. Ownership must come from processing the complete cached dataset,
+    otherwise shared properties migrate to whichever page was fetched last.
+    """
+    required = {
+        entity["page"]
+        for entity_id, entity in entities.items()
+        if (entity["type"], f"{ip_address}_{entity_id}") not in disabled_entities
+    }
+    return [page for page in pages if page not in loaded_pages or page in required]
+
+
 def missing_data_pages(
     expected_pages: "list[str] | set[str]", pages_data: dict[str, Any] | None
 ) -> list[str]:

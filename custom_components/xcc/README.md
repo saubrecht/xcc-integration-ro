@@ -8,6 +8,7 @@ This read-only integration monitors XCC heat pump controllers through Home Assis
 - **Multi-language Support**: Supports English and Czech languages with automatic language detection
 - **Real-time Monitoring**: Monitors temperatures, pressures, power consumption, and system status
 - **Read-only Operation**: Never changes controller settings
+- **Selective Polling**: After a full startup discovery, skips data pages with no entities or only disabled entities. Enabling an entity restores its page on the next poll. Hidden entities still keep their pages active; `main.xml` is always fetched.
 - **Device Classes**: Proper device classes for sensors (temperature, power, energy, etc.)
 
 ## Supported Entity Types

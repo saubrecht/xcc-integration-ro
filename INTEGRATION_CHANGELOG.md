@@ -4,6 +4,8 @@ All notable changes to the XCC Heat Pump Controller Home Assistant integration.
 
 ## Unreleased
 
+- After a full startup discovery, poll only data pages owning enabled HA entities. Re-enabling an entity restores its page on the next poll; hidden entities still count as enabled. Failed or malformed pages keep retrying, and main.xml remains polled.
+- Cache skipped pages to preserve shared-property ownership and exclude deliberately skipped pages from data-gathering health alerts. Debug logs list the polling count and skipped pages.
 - Expose fetched controller settings as read-only sensors (numbers, choices and action values) or binary sensors (on/off settings), including secondary heating-circuit setpoints.
 - Preserve descriptor metadata for secondary circuits and include read-only choice values.
 - Remove controller value writes, entity/coordinator write entry points and the obsolete write resolver. Former control platforms remain as empty compatibility placeholders for unloading.

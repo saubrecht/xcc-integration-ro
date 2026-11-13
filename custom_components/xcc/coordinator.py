@@ -6,11 +6,13 @@ import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
+from xml.etree import ElementTree as ET
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_IP_ADDRESS, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -36,6 +38,7 @@ from .entity_helpers import (
     next_gather_health,
     normalize_property_name,
     process_entities as _process_entities_core,
+    select_data_pages,
 )
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,6 +92,10 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
         self._pages_discovered = False
         self._discovered_descriptor_pages = []
         self._discovered_data_pages = []
+        # Retain all parsed pages, including intentionally skipped ones, so
+        # duplicate properties keep the same owning page across polls.
+        self._page_entities: dict[str, list[dict[str, Any]]] = {}
+        self._page_filter_ready = False
 
         self._update_lock = asyncio.Lock()  # Prevent concurrent updates
         self._last_update_time = 0  # Track last update time
@@ -229,7 +236,13 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                 await self._load_descriptors(client)
 
             # Use discovered data pages or fall back to default
-            data_pages = self._discovered_data_pages if self._discovered_data_pages else XCC_DATA_PAGES
+            all_data_pages = self._discovered_data_pages or XCC_DATA_PAGES
+            data_pages = self._select_data_pages(all_data_pages)
+            skipped_pages = [page for page in all_data_pages if page not in data_pages]
+            _LOGGER.debug(
+                "XCC page selection: polling %d/%d data pages; skipped: %s",
+                len(data_pages), len(all_data_pages), skipped_pages,
+            )
 
             # Fetch only data pages (not descriptors)
             _LOGGER.debug(
@@ -254,13 +267,24 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
             )
 
             # Parse entities from all pages
-            all_entities = []
+            page_entities = dict(self._page_entities)
             page_counts = []
             for page_name, xml_content in pages_data.items():
                 if not xml_content.startswith("Error:"):
                     entities = parse_xml_entities(xml_content, page_name)
+                    if not entities:
+                        # A valid empty page can be retired. A parse failure
+                        # must keep retrying instead of looking entity-free.
+                        try:
+                            ET.fromstring(xml_content)
+                        except (ET.ParseError, ValueError):
+                            pages_data[page_name] = "Error: Invalid XML"
+                            _LOGGER.warning(
+                                "Invalid XML from page %s; will retry", page_name
+                            )
+                            continue
                     page_counts.append(f"{page_name}:{len(entities)}")
-                    all_entities.extend(entities)
+                    page_entities[page_name] = entities
                 else:
                     _LOGGER.warning(
                         "Error fetching page %s: %s", page_name, xml_content
@@ -274,15 +298,26 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                 )
                 if main_xml and not main_xml.startswith("Error:"):
                     sysconfig_entities = client.parse_main_xml_config_entities(main_xml)
+                    page_entities["main.xml"] = sysconfig_entities
                     if sysconfig_entities:
-                        all_entities.extend(sysconfig_entities)
                         page_counts.append(f"main.xml(sysconfig):{len(sysconfig_entities)}")
             except Exception as main_err:
                 _LOGGER.debug("Could not parse main.xml config entities: %s", main_err)
 
-            # Log consolidated parsing results
-            _LOGGER.debug("📄 Parsed %d entities from %d pages: %s", len(all_entities), len(page_counts), ", ".join(page_counts))
+            # Reprocess the complete snapshot in discovery order. Keeping
+            # skipped pages prevents shared values from changing ownership.
+            all_entities = [
+                entity
+                for page in dict.fromkeys([*all_data_pages, "main.xml"])
+                for entity in page_entities.get(page, [])
+            ]
+            _LOGGER.debug(
+                "Processing %d entities (including cached pages); refreshed: %s",
+                len(all_entities), ", ".join(page_counts),
+            )
             processed_data = self._process_entities(all_entities)
+            self._page_entities = page_entities
+            self._page_filter_ready = True
 
             # Record data-gathering health: which expected data pages failed to
             # fetch this poll (fetch_pages returns "Error:" for the ones it missed).
@@ -341,6 +376,21 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                 f"Error communicating with XCC controller: {err}"
             ) from err
 
+    def _select_data_pages(self, pages: list[str]) -> list[str]:
+        """Read the current registry on every poll; always discover on startup."""
+        if not self._page_filter_ready:
+            return list(pages)
+
+        registry = er.async_get(self.hass)
+        disabled = {
+            (entry.domain, entry.unique_id)
+            for entry in er.async_entries_for_config_entry(registry, self.entry.entry_id)
+            if entry.platform == DOMAIN and entry.disabled_by is not None
+        }
+        return select_data_pages(
+            pages, set(self._page_entities), self.entities, disabled, self.ip_address
+        )
+
     def _process_entities(self, entities: list[dict[str, Any]]) -> dict[str, Any]:
         """Process raw entities into organized data structure with priority-based device assignment.
 
@@ -386,9 +436,9 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
             entities, self.entity_configs, self.language
         )
 
-        # Merge into the long-lived entities map the rest of the coordinator /
-        # platform layer reads from.
-        self.entities.update(entities_metadata)
+        # This is a complete snapshot assembled from fresh and cached pages.
+        # Replace obsolete metadata too, so a now-empty page can be skipped.
+        self.entities = entities_metadata
 
         entity_counts = {
             "switches": len(processed_data["switches"]),
