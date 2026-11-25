@@ -45,6 +45,7 @@ def coordinator():
     c.device_info = {"name": "Test controller"}
     c._note_gather_result = Mock()
     c._client = SimpleNamespace(
+        probe_status=AsyncMock(),
         fetch_pages=AsyncMock(return_value={
             PAGES[0]: xml(SHARED="10"),
             PAGES[1]: xml(SHARED="20", SECOND="30"),
@@ -119,3 +120,21 @@ async def test_now_empty_page_loses_its_metadata(coordinator):
         await c._async_update_data_locked()
         assert "xcc_shared" not in c.entities
         assert c._select_data_pages(PAGES) == [PAGES[1]]
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_stops_before_any_discovery_or_data_requests(coordinator):
+    c = coordinator
+    c._pages_discovered = c._descriptors_loaded = False
+    c._client.probe_status.side_effect = ValueError("Invalid STATUS.XML response")
+    c._discover_pages = AsyncMock()
+    c._load_descriptors = AsyncMock()
+    with pytest.raises(Exception, match="Invalid STATUS.XML response"):
+        await c._async_update_data_locked()
+    c._client.probe_status.assert_awaited_once()
+    c._discover_pages.assert_not_awaited()
+    c._load_descriptors.assert_not_awaited()
+    c._client.fetch_pages.assert_not_awaited()
+    c._client.fetch_page.assert_not_awaited()
+    assert not c._page_filter_ready
+    c._note_gather_result.assert_called_with([], poll_failed=True)

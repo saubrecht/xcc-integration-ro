@@ -817,6 +817,39 @@ class XCCClient:
         except Exception:
             pass  # Non-critical
 
+    async def probe_status(self) -> None:
+        """Make one direct diagnostic GET, without redirects or reauth retries.
+
+        Unlike fetch_page, preserve HTTP failures and unexpected bodies for
+        diagnosis. Never log request headers, response cookies or raw XML data.
+        """
+        from .response_diagnostics import diagnose_status_body, redact, safe_url
+
+        logger = logging.getLogger(__name__)
+        secrets = [self.username, self.password]
+        secrets.extend(cookie.value for cookie in self.session.cookie_jar)
+        url = f"http://{self.ip}/STATUS.XML"
+        async with self.session.get(url, allow_redirects=False) as response:
+            raw = await response.read()
+            # Include cookies newly set by this response in redaction too.
+            secrets.extend(cookie.value for cookie in self.session.cookie_jar)
+            result = diagnose_status_body(raw, response.status, secrets, response.charset)
+            log = logger.info if result["valid"] else logger.error
+            log(
+                "XCC STATUS diagnostic: url=%s status=%s content_type=%s "
+                "bytes=%d kind=%s location=%s redirects=disabled preview=%s",
+                redact(safe_url(response.url), secrets),
+                response.status,
+                redact(response.headers.get("Content-Type", "<missing>"), secrets)[:120],
+                result["bytes"], result["kind"],
+                redact(safe_url(response.headers.get("Location", "")), secrets),
+                result["preview"],
+            )
+        if not result["valid"]:
+            raise ValueError(
+                "STATUS.XML diagnostic rejected the response; stopped before page discovery"
+            )
+
     async def fetch_page(self, page: str) -> str:
         """Fetch XML page content with proper encoding detection and session validation."""
         import asyncio

@@ -16,6 +16,18 @@ This read-only integration monitors XCC heat pump controllers through Home Assis
 - **Sensors**: Read-only values like temperatures, pressures, and power consumption
 - **Binary Sensors**: Read-only on/off status such as running, alarms, heating, and cooling
 
+## Temporary response diagnostics
+
+Each polling cycle first probes `STATUS.XML` after normal session initialization.
+The log line `XCC STATUS diagnostic` records the HTTP status, response URL,
+content type, body length, response kind, redirect target (without query values),
+and a short redacted error-body preview. Form attributes, scripts, known
+credentials and session-cookie values are omitted. Valid XML values are not logged.
+The probe does not follow redirects or retry authentication. An invalid response
+stops that polling cycle before discovery and further XML requests; a valid
+response allows normal polling to continue. Later scheduled/setup retries can
+run another probe. This diagnostic adds one STATUS.XML request per cycle.
+
 ## Installation
 
 ### Method 1: Manual Installation

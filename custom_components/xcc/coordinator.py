@@ -227,6 +227,10 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
 
             client = self._client
 
+            # Check the actual HA session before probing any other XML pages.
+            # An invalid reply ends this polling cycle after this single GET.
+            await asyncio.wait_for(client.probe_status(), timeout=DEFAULT_TIMEOUT)
+
             # Discover pages on first run
             if not self._pages_discovered:
                 await self._discover_pages(client)
