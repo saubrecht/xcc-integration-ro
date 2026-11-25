@@ -252,17 +252,9 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug(
                 "Update triggered by: %s", getattr(self, "_update_source", "unknown")
             )
-            # A page batch is deliberately paced. Allow its request pauses in
-            # addition to the normal controller timeout, otherwise a healthy
-            # multi-page poll could time out solely because of the delay.
-            batch_timeout = max(
-                DEFAULT_TIMEOUT,
-                DEFAULT_TIMEOUT + (len(data_pages) - 1) * REQUEST_DELAY_SECONDS,
-            )
-            pages_data = await asyncio.wait_for(
-                client.fetch_pages(data_pages),
-                timeout=batch_timeout,
-            )
+            # The client bounds each request separately. A batch timeout
+            # would discard pages already fetched if a later page stalls.
+            pages_data = await client.fetch_pages(data_pages)
             _LOGGER.debug(
                 "Successfully fetched %d pages from XCC controller", len(pages_data)
             )

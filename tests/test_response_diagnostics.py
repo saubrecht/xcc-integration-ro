@@ -78,7 +78,7 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'XCCClient')
         methods = [
             node for node in cls.body if isinstance(node, ast.AsyncFunctionDef)
-            and node.name in {"probe_status", "ensure_status_session"}
+            and node.name in {"probe_status", "ensure_status_session", "fetch_pages"}
         ]
         rejected = next(
             node for node in tree.body if isinstance(node, ast.ClassDef)
@@ -100,6 +100,7 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
         self.ns = {
             "__package__": package.__name__, "__name__": package.__name__,
             "asyncio": asyncio, "_auth_locks": {}, "DEFAULT_TIMEOUT": 10,
+            "REQUEST_DELAY_SECONDS": 0,
             "aiohttp": types.SimpleNamespace(ClientTimeout=self.timeout),
         }
         exec(compile(ast.Module(body=[*imports, rejected, *methods], type_ignores=[]),
@@ -181,6 +182,25 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "Invalid XML"):
             await self.ns["ensure_status_session"](client)
         client._authenticate.assert_not_awaited()
+
+    async def test_stalled_page_does_not_discard_other_pages(self):
+        pages = ["STATUS.XML", "SLOW.XML", "OKRUH10.XML"]
+        self.ns["DEFAULT_TIMEOUT"] = 0.01
+
+        async def fetch_page(page):
+            if page == "SLOW.XML":
+                await asyncio.Event().wait()
+            return page
+
+        client = types.SimpleNamespace(fetch_page=AsyncMock(side_effect=fetch_page))
+        with self.assertLogs(self.ns["__name__"], level="WARNING"):
+            result = await asyncio.wait_for(self.ns["fetch_pages"](client, pages), 1)
+
+        self.assertEqual(result, {
+            "STATUS.XML": "STATUS.XML",
+            "SLOW.XML": "Error: Timeout",
+            "OKRUH10.XML": "OKRUH10.XML",
+        })
 
 
 class TestCoordinatorGuard(unittest.IsolatedAsyncioTestCase):

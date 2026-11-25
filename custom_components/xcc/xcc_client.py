@@ -917,7 +917,7 @@ class XCCClient:
             raise
 
     async def fetch_pages(self, pages: list[str]) -> dict[str, str]:
-        """Fetch multiple pages with delays to avoid overwhelming XCC controller."""
+        """Fetch pages sequentially and keep successful replies on page timeouts."""
         import asyncio
         import logging
 
@@ -930,7 +930,9 @@ class XCCClient:
                 if i > 0:
                     await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
-                results[page] = await self.fetch_page(page)
+                results[page] = await asyncio.wait_for(
+                    self.fetch_page(page), timeout=DEFAULT_TIMEOUT
+                )
                 _LOGGER.debug(
                     "Successfully fetched page %s (%d/%d)", page, i + 1, len(pages)
                 )
@@ -940,7 +942,7 @@ class XCCClient:
                 raise
             except asyncio.TimeoutError:
                 _LOGGER.warning("Timeout fetching page %s (%d/%d)", page, i + 1, len(pages))
-                results[page] = f"Error: Timeout"
+                results[page] = "Error: Timeout"
             except Exception as e:
                 _LOGGER.warning("Error fetching page %s: %s", page, e)
                 results[page] = f"Error: {e}"
