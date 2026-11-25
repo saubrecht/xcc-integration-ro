@@ -6,6 +6,7 @@ Reusable authentication and data fetching for CLI, pyscript, and HA integration.
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 

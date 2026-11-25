@@ -82,8 +82,14 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
         sys.modules[package.__name__ + '.response_diagnostics'] = diagnostics
         self.addCleanup(sys.modules.pop, package.__name__, None)
         self.addCleanup(sys.modules.pop, package.__name__ + '.response_diagnostics', None)
-        ns = {'__package__': package.__name__, '__name__': package.__name__, 'logging': logging}
-        exec(compile(ast.Module(body=[method], type_ignores=[]), 'xcc_client.py', 'exec'), ns)
+        # Use the production import instead of injecting logging, which hid a
+        # missing module import in the original diagnostic implementation.
+        imports = [
+            node for node in tree.body if isinstance(node, ast.Import)
+            and any(alias.name == 'logging' for alias in node.names)
+        ]
+        ns = {'__package__': package.__name__, '__name__': package.__name__}
+        exec(compile(ast.Module(body=[*imports, method], type_ignores=[]), 'xcc_client.py', 'exec'), ns)
         raw = b'<html><title>Access denied</title><input value="cookie-secret">password-secret</html>'
         response = types.SimpleNamespace(
             status=200, charset='utf-8', url='http://192.0.2.1/STATUS.XML?token=cookie-secret',
