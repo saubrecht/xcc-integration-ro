@@ -215,21 +215,18 @@ class XCCDataUpdateCoordinator(DataUpdateCoordinator):
                 # Use Home Assistant's config directory for cookie storage
                 cookie_file = f"{self.hass.config.config_dir}/.xcc_session_{self.ip_address.replace('.', '_')}.json"
 
-                self._client = XCCClient(
+                client = XCCClient(
                     ip=self.ip_address,
                     username=self.username,
                     password=self.password,
                     cookie_file=cookie_file,
                 )
-                await self._client.__aenter__()  # Initialize the client
+                await client.__aenter__()
+                self._client = client
             else:
+                client = self._client
                 _LOGGER.debug("Reusing existing XCC client for %s", self.ip_address)
-
-            client = self._client
-
-            # Check the actual HA session before probing any other XML pages.
-            # An invalid reply ends this polling cycle after this single GET.
-            await asyncio.wait_for(client.probe_status(), timeout=DEFAULT_TIMEOUT)
+                await client.ensure_status_session()
 
             # Discover pages on first run
             if not self._pages_discovered:

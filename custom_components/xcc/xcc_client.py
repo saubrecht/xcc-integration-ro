@@ -16,10 +16,11 @@ from yarl import URL
 
 try:
     from .descriptor_parser import XCCDescriptorParser
-    from .const import REQUEST_DELAY_SECONDS
+    from .const import DEFAULT_TIMEOUT, REQUEST_DELAY_SECONDS
 except ImportError:
     # For standalone usage
     from descriptor_parser import XCCDescriptorParser
+    DEFAULT_TIMEOUT = 10
     REQUEST_DELAY_SECONDS = 1.2
 
 # Global lock to prevent concurrent authentication attempts to the same IP
@@ -79,6 +80,10 @@ def unqualify_circuit_prop(prop: str) -> tuple[str, int | None]:
     return f"{_CIRCUIT_PROP_PREFIX}{match.group(2)}", int(match.group(1))
 
 
+class StatusSessionRejected(ValueError):
+    """The controller requires authentication to read STATUS.XML."""
+
+
 class XCCClient:
     """Client for XCC heat pump controller communication."""
 
@@ -97,7 +102,11 @@ class XCCClient:
         self.descriptor_parser = XCCDescriptorParser()
 
     async def __aenter__(self):
-        await self.connect()
+        try:
+            await self.connect()
+        except (Exception, asyncio.CancelledError):
+            await self.close()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -152,27 +161,20 @@ class XCCClient:
             timeout=aiohttp.ClientTimeout(total=30),
         )
 
-        # Test if existing session works, otherwise authenticate
-        import logging
+        await self.ensure_status_session()
 
-        _LOGGER = logging.getLogger(__name__)
-
-        _LOGGER.debug("Checking if existing session is valid")
-        if not await self._test_session():
-            _LOGGER.debug("Session invalid, performing authentication")
-
-            # Use global lock to prevent concurrent authentication to same IP
-            if self.ip not in _auth_locks:
-                _auth_locks[self.ip] = asyncio.Lock()
-
-            async with _auth_locks[self.ip]:
-                # Re-test session in case another client just authenticated
-                if not await self._test_session():
-                    await self._authenticate()
-                else:
-                    _LOGGER.debug("Session became valid while waiting for lock")
-        else:
-            _LOGGER.debug("Existing session is valid, skipping authentication")
+    async def ensure_status_session(self) -> None:
+        """Validate access, authenticate once if rejected, then validate again."""
+        async with _auth_locks.setdefault(self.ip, asyncio.Lock()):
+            try:
+                await self.probe_status()
+                return
+            except StatusSessionRejected:
+                logging.getLogger(__name__).info(
+                    "XCC STATUS.XML requires a new session; signing in"
+                )
+            await self._authenticate()
+            await self.probe_status()
 
     def _is_login_page(self, content: str) -> bool:
         """Check if the given content is a LOGIN page indicating session expiration.
@@ -184,22 +186,6 @@ class XCCClient:
             True if the content appears to be a LOGIN page, False otherwise
         """
         return "<LOGIN>" in content and "USER VALUE" in content
-
-    def _is_session_valid(self, status: int, content: str) -> bool:
-        """Check if a response indicates a valid session.
-
-        Args:
-            status: HTTP response status code
-            content: Response content
-
-        Returns:
-            True if the session appears to be valid, False otherwise
-        """
-        return (
-            status == 200
-            and not self._is_login_page(content)
-            and "500" not in content
-        )
 
     def _decode_and_sanitize_content(self, raw_bytes: bytes, encoding: str) -> str:
         """Decode raw bytes and sanitize the content.
@@ -660,32 +646,12 @@ class XCCClient:
             return XCC_DESCRIPTOR_PAGES, XCC_DATA_PAGES
 
     async def _test_session(self) -> bool:
-        """Test if current session is valid."""
-        import logging
-
-        _LOGGER = logging.getLogger(__name__)
-
+        """Recheck protected data before reauthenticating after a page failure."""
         try:
-            _LOGGER.debug("Testing session validity for %s", self.ip)
-            # Use INDEX.XML like the working script
-            async with self.session.get(f"http://{self.ip}/INDEX.XML") as resp:
-                raw = await resp.read()
-                text = raw.decode(resp.get_encoding() or "utf-8")
-                is_valid = self._is_session_valid(resp.status, text)
-
-                _LOGGER.debug(
-                    "Session test result: status=%d, contains_login=%s, contains_500=%s, valid=%s",
-                    resp.status,
-                    self._is_login_page(text),
-                    "500" in text,
-                    is_valid,
-                )
-                if not is_valid:
-                    _LOGGER.debug("Session test content: %s", text[:200])
-                return is_valid
-        except Exception as e:
-            _LOGGER.debug("Session test failed with exception: %s", e)
+            await self.probe_status()
+        except StatusSessionRejected:
             return False
+        return True
 
     async def _authenticate(self):
         """Perform authentication and save session with retry logic."""
@@ -749,7 +715,6 @@ class XCCClient:
         session_id = None
         _LOGGER.debug("Extracting session ID from cookies")
         for cookie in self.session.cookie_jar:
-            _LOGGER.debug("Found cookie: %s=%s", cookie.key, cookie.value)
             if cookie.key == "SoftPLC":
                 session_id = cookie.value
                 break
@@ -761,35 +726,22 @@ class XCCClient:
             )
             raise Exception("No SoftPLC cookie found")
 
-        _LOGGER.debug("Found session ID: %s", session_id)
-
         # Login with hashed password
         passhash = hashlib.sha1(f"{session_id}{self.password}".encode()).hexdigest()
         login_data = {"USER": self.username, "PASS": passhash}
-
-        _LOGGER.debug(
-            "Attempting login with username=%s, passhash=%s",
-            self.username,
-            passhash[:10] + "...",
-        )
 
         async with self.session.post(
             f"http://{self.ip}/RPC/WEBSES/create.asp", data=login_data
         ) as resp:
             response_text = await resp.text()
-            _LOGGER.debug(
-                "Login response: status=%d, content=%s",
-                resp.status,
-                response_text[:200],
-            )
+            _LOGGER.debug("Login response: status=%d", resp.status)
 
             # Check both status and content like the working script
             if resp.status != 200 or "<LOGIN>" in response_text:
                 _LOGGER.error(
-                    "Authentication failed: status=%d, contains_login=%s, content=%s",
+                    "Authentication failed: status=%d, contains_login=%s",
                     resp.status,
                     "<LOGIN>" in response_text,
-                    response_text[:200],
                 )
                 raise Exception("Authentication failed")
 
@@ -824,18 +776,36 @@ class XCCClient:
         Unlike fetch_page, preserve HTTP failures and unexpected bodies for
         diagnosis. Never log request headers, response cookies or raw XML data.
         """
-        from .response_diagnostics import diagnose_status_body, redact, safe_url
+        try:
+            from .response_diagnostics import diagnose_status_body, redact, safe_url
+        except ImportError:
+            from response_diagnostics import diagnose_status_body, redact, safe_url
 
         logger = logging.getLogger(__name__)
         secrets = [self.username, self.password]
         secrets.extend(cookie.value for cookie in self.session.cookie_jar)
         url = f"http://{self.ip}/STATUS.XML"
-        async with self.session.get(url, allow_redirects=False) as response:
+        async with self.session.get(
+            url, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
+        ) as response:
             raw = await response.read()
             # Include cookies newly set by this response in redaction too.
             secrets.extend(cookie.value for cookie in self.session.cookie_jar)
             result = diagnose_status_body(raw, response.status, secrets, response.charset)
-            log = logger.info if result["valid"] else logger.error
+            location = safe_url(response.headers.get("Location", ""))
+            requires_login = (
+                response.status == 401
+                or result["kind"] == "login"
+                or (
+                    300 <= response.status < 400
+                    and location.rsplit("/", 1)[-1].upper() in {"LOGIN.HTM", "LOGIN.XML"}
+                )
+            )
+            log = logger.error
+            if result["valid"]:
+                log = logger.info
+            elif requires_login:
+                log = logger.warning
             log(
                 "XCC STATUS diagnostic: url=%s status=%s content_type=%s "
                 "bytes=%d kind=%s location=%s redirects=disabled preview=%s",
@@ -843,9 +813,11 @@ class XCCClient:
                 response.status,
                 redact(response.headers.get("Content-Type", "<missing>"), secrets)[:120],
                 result["bytes"], result["kind"],
-                redact(safe_url(response.headers.get("Location", "")), secrets),
+                redact(location, secrets),
                 result["preview"],
             )
+        if requires_login:
+            raise StatusSessionRejected("STATUS.XML rejected the session")
         if not result["valid"]:
             raise ValueError(
                 "STATUS.XML diagnostic rejected the response; stopped before page discovery"

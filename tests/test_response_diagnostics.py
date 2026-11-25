@@ -1,6 +1,7 @@
 """Controller diagnostics, runnable with the Python standard library only."""
 
 import ast
+import asyncio
 import importlib.util
 import logging
 import sys
@@ -72,10 +73,17 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
     exercised by the production method using the standard-library helpers.
     """
 
-    async def test_probe_uses_one_get_and_redacts_rejected_reply(self):
+    def setUp(self):
         tree = ast.parse((XCC / 'xcc_client.py').read_text())
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'XCCClient')
-        method = next(n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'probe_status')
+        methods = [
+            node for node in cls.body if isinstance(node, ast.AsyncFunctionDef)
+            and node.name in {"probe_status", "ensure_status_session"}
+        ]
+        rejected = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef)
+            and node.name == "StatusSessionRejected"
+        )
         package = types.ModuleType('_xcc_probe_test')
         package.__path__ = []
         sys.modules[package.__name__] = package
@@ -88,8 +96,16 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
             node for node in tree.body if isinstance(node, ast.Import)
             and any(alias.name == 'logging' for alias in node.names)
         ]
-        ns = {'__package__': package.__name__, '__name__': package.__name__}
-        exec(compile(ast.Module(body=[*imports, method], type_ignores=[]), 'xcc_client.py', 'exec'), ns)
+        self.timeout = Mock()
+        self.ns = {
+            "__package__": package.__name__, "__name__": package.__name__,
+            "asyncio": asyncio, "_auth_locks": {}, "DEFAULT_TIMEOUT": 10,
+            "aiohttp": types.SimpleNamespace(ClientTimeout=self.timeout),
+        }
+        exec(compile(ast.Module(body=[*imports, rejected, *methods], type_ignores=[]),
+                     "xcc_client.py", "exec"), self.ns)
+
+    async def test_probe_uses_one_get_and_redacts_rejected_reply(self):
         raw = b'<html><title>Access denied</title><input value="cookie-secret">password-secret</html>'
         response = types.SimpleNamespace(
             status=200, charset='utf-8', url='http://192.0.2.1/STATUS.XML?token=cookie-secret',
@@ -101,10 +117,12 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         session = types.SimpleNamespace(get=Mock(return_value=cm), cookie_jar=[types.SimpleNamespace(value='cookie-secret')])
         client = types.SimpleNamespace(ip='192.0.2.1', username='xcc', password='password-secret', session=session)
-        with self.assertLogs(package.__name__, level='ERROR') as logs:
+        with self.assertLogs(self.ns["__name__"], level="ERROR") as logs:
             with self.assertRaisesRegex(ValueError, 'stopped before page discovery'):
-                await ns['probe_status'](client)
-        session.get.assert_called_once_with('http://192.0.2.1/STATUS.XML', allow_redirects=False)
+                await self.ns["probe_status"](client)
+        session.get.assert_called_once_with(
+            'http://192.0.2.1/STATUS.XML', allow_redirects=False, timeout=self.timeout.return_value
+        )
         output = ' '.join(logs.output)
         self.assertIn('Access denied', output)
         self.assertIn('status=200', output)
@@ -113,10 +131,60 @@ class TestDirectProbe(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('password-secret', output)
 
 
+    async def test_login_redirect_reauthenticates_once_and_checks_status_again(self):
+        for final_status, final_body in [
+            (200, b'<PAGE><INPUT P="X" VALUE="1"/></PAGE>'),
+            (302, b''),
+        ]:
+            with self.subTest(final_status=final_status):
+                requests = []
+
+                def response(status, raw):
+                    return types.SimpleNamespace(
+                        status=status, charset="utf-8", url="http://192.0.2.1/STATUS.XML",
+                        headers={"Location": "/LOGIN.HTM"} if status == 302 else {},
+                        read=AsyncMock(return_value=raw),
+                    )
+
+                cm = Mock()
+                cm.__aenter__ = AsyncMock(side_effect=[
+                    response(302, b""), response(final_status, final_body)
+                ])
+                cm.__aexit__ = AsyncMock(return_value=False)
+
+                def get(url, **kwargs):
+                    requests.append("status")
+                    return cm
+
+                async def authenticate():
+                    requests.append("authenticate")
+
+                client = types.SimpleNamespace(
+                    ip="192.0.2.1", username="xcc", password="secret",
+                    session=types.SimpleNamespace(get=get, cookie_jar=[]),
+                    _authenticate=AsyncMock(side_effect=authenticate),
+                )
+                client.probe_status = types.MethodType(self.ns["probe_status"], client)
+                with self.assertLogs(self.ns["__name__"], level="WARNING"):
+                    if final_status == 302:
+                        with self.assertRaises(self.ns["StatusSessionRejected"]):
+                            await self.ns["ensure_status_session"](client)
+                    else:
+                        await self.ns["ensure_status_session"](client)
+                self.assertEqual(requests, ["status", "authenticate", "status"])
+
+    async def test_invalid_data_without_auth_challenge_does_not_authenticate(self):
+        client = types.SimpleNamespace(
+            ip="192.0.2.1", _authenticate=AsyncMock(),
+            probe_status=AsyncMock(side_effect=ValueError("Invalid XML")),
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid XML"):
+            await self.ns["ensure_status_session"](client)
+        client._authenticate.assert_not_awaited()
+
+
 class TestCoordinatorGuard(unittest.IsolatedAsyncioTestCase):
     async def test_bad_probe_prevents_all_other_xml_requests(self):
-        import asyncio
-
         tree = ast.parse((XCC / 'coordinator.py').read_text())
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
         method = next(n for n in cls.body if isinstance(n, ast.AsyncFunctionDef)
@@ -137,7 +205,7 @@ class TestCoordinatorGuard(unittest.IsolatedAsyncioTestCase):
         module = ast.fix_missing_locations(ast.Module(body=[future, method], type_ignores=[]))
         exec(compile(module, 'coordinator.py', 'exec'), ns)
         client = types.SimpleNamespace(
-            probe_status=AsyncMock(side_effect=ValueError('Invalid STATUS.XML')),
+            ensure_status_session=AsyncMock(side_effect=ValueError('Invalid STATUS.XML')),
             fetch_pages=AsyncMock(), fetch_page=AsyncMock(),
         )
         coordinator = types.SimpleNamespace(
@@ -147,7 +215,7 @@ class TestCoordinatorGuard(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs(package.__name__, level='ERROR'):
             with self.assertRaisesRegex(RuntimeError, 'Invalid STATUS.XML'):
                 await ns['_async_update_data_locked'](coordinator)
-        client.probe_status.assert_awaited_once()
+        client.ensure_status_session.assert_awaited_once()
         client.fetch_pages.assert_not_awaited()
         client.fetch_page.assert_not_awaited()
         coordinator._discover_pages.assert_not_awaited()

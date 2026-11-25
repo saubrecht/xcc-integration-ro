@@ -4,7 +4,7 @@ All notable changes to the XCC Heat Pump Controller Home Assistant integration.
 
 ## Unreleased
 
-- Probe STATUS.XML before each page batch using one GET with redirects and automatic reauthentication disabled for that probe. Log response metadata and a bounded, credential-redacted error preview; reject empty, HTML, login and non-data responses before discovery or further XML requests.
+- Verify access to protected STATUS.XML before discovery and polling. If the controller asks for authentication, sign in and verify again before requesting other pages. Retain redacted response diagnostics.
 - After a full startup discovery, poll only data pages owning enabled HA entities. Re-enabling an entity restores its page on the next poll; hidden entities still count as enabled. Failed or malformed pages keep retrying, and main.xml remains polled.
 - Cache skipped pages to preserve shared-property ownership and exclude deliberately skipped pages from data-gathering health alerts. Debug logs list the polling count and skipped pages.
 - Expose fetched controller settings as read-only sensors (numbers, choices and action values) or binary sensors (on/off settings), including secondary heating-circuit setpoints.
